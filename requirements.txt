@@ -1,0 +1,8 @@
+matplotlib
+openpyxl
+pandas
+python-docx
+pyinstaller
+pyodbc
+PyQt6
+QtAwesome

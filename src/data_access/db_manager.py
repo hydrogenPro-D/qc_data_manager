@@ -1,0 +1,1034 @@
+"""DbManager — the backend: views in, GUI-ready frames out.
+
+The one place that knows where data lives. Everything above it is handed
+callables and DataFrames, everything below it is either a view, a procedure or
+a pure processor.
+
+    dbo.MetaData        the produced electrodes, read only
+    qc_data.vw_*        statuses, the board, the SEM results
+    qc_data.usp_*       every write this application makes
+
+Reads come back through the denormalizing views, get normalized (Decimal →
+float, dates → ISO, every NULL/NaN/NaT → None) and then run through the
+processors, which are pure DataFrame in, DataFrame out.
+
+There is no file based mode. The local CSV and JSON this app started on now
+exist only as the input to data/ETL, which loads them into the schema above.
+
+Connections are opened per query/proc call (reads are infrequent: startup +
+refresh; writes are user-paced) except the reused watermark-poll connection,
+one per thread.
+
+NOTHING RESEEDS A WATERMARK AFTER OUR OWN WRITE. It used to, so the next poll
+would not see our own change and reload for nothing. Each reseed re-read the
+watermarks, so a card drop cost four round trips and about half a second of
+frozen window, to save a reload that now costs 19ms on a background thread. The
+redundant reload is by far the cheaper of the two.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import subprocess
+import threading
+from pathlib import Path
+
+import pandas as pd
+
+from src.data_access import app_config
+from src.data_access.electrodes.electrode_columns import (
+    ElectrodeColumns,
+    ElectrodeStatus,
+    normalize_marking,
+)
+from src.data_access.electrodes.electrode_processor import ElectrodeProcessor
+from src.data_access.electrodes.electrode_status_db import (
+    load_manual_edit_times,
+    load_status_by_marking as load_status_from_db,
+)
+from src.data_access.electrodes.electrode_vat_db import load_vat_by_marking
+from src.data_access.electrodes.status_propagation import propagate_detailed
+from src.data_access.qc_board.qc_board_db_store import QcBoardDbStore
+from src.data_access.sem_edx import sem_edx_db_source as sem_db
+from src.data_access.sem_edx.sem_edx_columns import (
+    DEFAULT_LAYOUT,
+    RATIO_SEPARATOR,
+    SemEdxColumns,
+    SAMPLE_KEY,
+    element_symbol,
+    quantities,
+    split_images,
+)
+from src.data_access.sem_edx.sem_edx_processor import SemEdxProcessor
+from src.data_access.sem_edx.sem_edx_result_parser import (
+    ParsedFolder,
+    ParsedMeasurement,
+    candidate_images,
+    parse_result_folder,
+    result_images,
+)
+from src.data_access.sem_edx.sem_edx_source import (
+    DEFAULT_GENERATION,
+    portable_folder,
+    resolve_folder,
+)
+from src.data_access.sql_session import (
+    SQL_DATETIMEOFFSET,
+    SqlSession,
+    handle_datetimeoffset as _handle_datetimeoffset,
+    normalize as _normalize_frame,
+)
+from src.data_access.watermark import WatermarkPoller
+
+# The schema this application owns.
+QC_SCHEMA = "qc_data"
+
+# What the qc_data watermark view reports on, and what each one reloads.
+_ELECTRODE_STATUS_ENTITY = "electrode_status"
+_QC_BOARD_ENTITY = "qc_board"
+_SEM_EDX_ENTITY = "sem_edx"
+
+# Production metadata: one row per produced electrode. Read straight from the
+# base table (no view exists for it yet); [Marking] carries the B-number.
+METADATA_SCHEMA = "dbo"
+METADATA_TABLE = "MetaData"
+METADATA_KEY = "Id"
+_METADATA_ENTITY = "metadata"
+
+# The columns the Electrodes tab needs, in display order. These are the stored
+# identifiers (the contract); what the operator sees is mapped in the GUI.
+METADATA_COLUMNS = [c.value for c in ElectrodeColumns]
+
+# Only electrode markings are of interest; the table also holds A-numbered and
+# unmarked rows (~2k of them) from other runs. Recipes other than the two
+# production ones (test/dryer/buffer runs) are excluded the same way.
+# TRIM because [Full_name] is fixed-width and comes back space-padded.
+METADATA_FILTER = (
+    "[Marking] LIKE 'B%' "
+    "AND TRIM([Full_name]) IN ('CATHODE', 'ANODE', 'MM1')"
+)
+
+# The numeric part of a marking ('B14174' → 14174), for sorting in production
+# order. TRY_CONVERT rather than CONVERT so an odd marking sorts last instead
+# of failing the whole query.
+MARKING_NUMBER_SQL = "TRY_CONVERT(BIGINT, SUBSTRING(TRIM([Marking]), 2, 20))"
+
+class DriverNotInstalledError(RuntimeError):
+    """Raised when the required ODBC driver is absent even after its installer ran."""
+
+
+class DriverInstallDeclinedError(DriverNotInstalledError):
+    """Raised when the user declines to install the required ODBC driver."""
+
+
+class DbManager:
+    """SQL backend. Reads through views, writes through stored procedures."""
+
+    def __init__(self, config_file_name: str = "db_connection.json",
+                 install_confirm=None, ask_image_root=None,
+                 database: str = "") -> None:
+        # ``install_confirm`` is an optional ``(driver_name, installer_path) -> bool``
+        # callback asked before the ODBC-driver installer runs. It lets the GUI pop a
+        # Yes/No dialog while this data-layer class stays Qt-free. None (headless /
+        # tests) installs without asking.
+        self._install_confirm = install_confirm
+        # ``() -> str``, a folder picker for the SEM images library, asked only
+        # when the search cannot find it. Same reason it is a callable.
+        self._ask_image_root = ask_image_root
+
+        self._base_directory = app_config.base_directory()
+        self._config_path = self._base_directory / "config" / config_file_name
+
+        cfg = self._load_config(self._config_path)
+        # An ETL script can point this at the other database without editing
+        # the connection file. The login is whatever the file says: the same
+        # contained user exists on both.
+        if database:
+            cfg = {**cfg, "DB_DATABASE": database}
+        self._driver_name = cfg["DB_DRIVER"]
+        self._conn_str = self._build_connection_string(cfg)
+
+        # No fallback backend — if the driver is missing, install it and wait.
+        self._ensure_driver_installed()
+
+        self._session = SqlSession(self._conn_str)
+        # The QC board lives here too, so its decisions can override the base
+        # status on every read. The GUI shares this one instance.
+        self._qc_board = QcBoardDbStore(self._session)
+        # When each by-hand correction was made, so a frozen board verdict on
+        # the same electrode can be ordered against it. Kept in step on write:
+        # nothing re-reads the statuses after startup.
+        self._manual_edits = load_manual_edit_times(self._session)
+        # Which vat each electrode was plated in, joined in from the process
+        # log. Deliberately NOT read here: the window has nothing to do with
+        # this column while it opens, and the process log is a far bigger table
+        # than the electrode list. The GUI asks for it on a worker thread once
+        # it is up, see load_vats, and the column appears when it arrives.
+        self._vats: dict[str, str] = {}
+        self._electrodes = ElectrodeProcessor(
+            status_by_marking=load_status_from_db(self._session),
+            overrides_provider=self._qc_board.status_overrides,
+            base_overrides_provider=self._settled_statuses,
+            settled_priorities_provider=self._settled_priorities,
+            vat_provider=lambda: self._vats,
+            cracked_provider=self._qc_board.cracked_electrodes)
+        # Which quantities each sheet shows, from config.json. Read per
+        # generation on first use, and one processor per generation and
+        # electrode type, since none of the four measures quite the same thing.
+        self._sem_edx_layouts: dict[str, dict[str, list[str]]] = {}
+        self._sem_edx_processors: dict[tuple[str, str], SemEdxProcessor] = {}
+        self._sem_edx_caches: dict[str, pd.DataFrame] = {}
+        self._metadata_cache = None  # last raw electrode read, for reprocessing
+        # (MAX(Id), COUNT(*)) as of the last poll, and as of the read that
+        # filled the cache. Different means dbo.MetaData itself moved and the
+        # rows have to be fetched again, rather than only reprocessed.
+        self._produced_seen = None
+        self._produced_applied = None
+        # One reused connection PER THREAD: the poll runs on a worker thread
+        # and a pyodbc connection cannot be shared across threads.
+        self._poll_local = threading.local()
+        # dbo.MetaData has no watermark view of its own, so it gets a
+        # (MAX(Id), COUNT(*)) query — same contract, different shape.
+        self._metadata_poller = WatermarkPoller(self._metadata_watermarks)
+        # The tables this app owns report through their own view, in the schema
+        # this app owns, so the board and the SEM tab notice each other's work.
+        self._qc_poller = WatermarkPoller(self._qc_watermarks)
+
+    # ---- connection ---------------------------------------------------
+    @staticmethod
+    def _load_config(config_path: Path) -> dict:
+        if not config_path.exists():
+            raise FileNotFoundError(f"DB connection config not found: {config_path}")
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+
+        required = ["DB_DRIVER", "DB_SERVER", "DB_DATABASE", "DB_USERNAME", "DB_PASSWORD"]
+        missing = [k for k in required if not str(cfg.get(k, "")).strip()]
+        if missing:
+            raise ValueError(
+                f"{config_path.name} is missing/empty fields: {', '.join(missing)} "
+                f"({config_path})"
+            )
+        return cfg
+
+    @staticmethod
+    def _build_connection_string(cfg: dict) -> str:
+        return (
+            f"DRIVER={{{cfg['DB_DRIVER']}}};"
+            f"SERVER={cfg['DB_SERVER']};"
+            f"DATABASE={cfg['DB_DATABASE']};"
+            f"UID={cfg['DB_USERNAME']};"
+            f"PWD={cfg['DB_PASSWORD']};"
+            f"Encrypt=yes;TrustServerCertificate=no;"
+        )
+
+    def _ensure_driver_installed(self) -> None:
+        """Install the configured ODBC driver if absent, blocking until done."""
+        import pyodbc
+
+        if self._driver_name in pyodbc.drivers():
+            return
+
+        installer = self._base_directory / "driver" / "msodbcsql.msi"
+        if not installer.exists():
+            raise DriverNotInstalledError(
+                f"ODBC driver '{self._driver_name}' is not installed and its "
+                f"installer was not found at {installer}."
+            )
+
+        # Ask first (the GUI shows a Yes/No dialog). Declining aborts startup.
+        if self._install_confirm is not None and not self._install_confirm(self._driver_name, installer):
+            raise DriverInstallDeclinedError(
+                f"Installation of the required ODBC driver '{self._driver_name}' "
+                f"was declined. The application cannot start without it."
+            )
+
+        subprocess.run(["msiexec", "/i", str(installer)])
+        if self._driver_name not in pyodbc.drivers():
+            raise DriverNotInstalledError(
+                f"ODBC driver '{self._driver_name}' is still not installed after "
+                f"running the installer. Install it and restart the app."
+            )
+
+    # ---- reads --------------------------------------------------------
+    def _connect(self):
+        """Open a connection with the DATETIMEOFFSET converter registered.
+
+        Every read/poll path goes through here so no caller can hit the
+        unsupported-type error.
+        """
+        import pyodbc
+
+        conn = pyodbc.connect(self._conn_str)
+        conn.add_output_converter(SQL_DATETIMEOFFSET, _handle_datetimeoffset)
+        return conn
+
+    def _query(self, sql: str) -> pd.DataFrame:
+        """Run a SELECT and return the normalized result."""
+        return self._session.query(sql)
+
+    @staticmethod
+    def _normalize(df: pd.DataFrame) -> pd.DataFrame:
+        """Kept as the name the rest of this class and its tests use; the rule
+        itself lives in ``sql_session`` so the stores normalize identically."""
+        return _normalize_frame(df)
+
+    # ---- production metadata (dbo.MetaData) ---------------------------
+    def get_metadata(self) -> pd.DataFrame:
+        """Every B-marked electrode, highest marking first.
+
+        Sorted by the marking's number rather than by [Id]: rows don't always
+        reach the database in marking order (B13904 lands before B13903), and
+        an out-of-sequence row makes the ±2 margin and the sweeps look wrong
+        even when they're right — they work on the marking sequence, not on
+        insertion order. [Id] only breaks ties.
+
+        The ordering contract: if writes are ever added here, the row-index → id
+        lookup must use this same ORDER BY or an edit would hit the wrong row.
+        """
+        columns = ", ".join(f"[{c}]" for c in METADATA_COLUMNS)
+        self._metadata_cache = self._query(
+            f"SELECT {columns} FROM [{METADATA_SCHEMA}].[{METADATA_TABLE}] "
+            f"WHERE {METADATA_FILTER} "
+            f"ORDER BY {MARKING_NUMBER_SQL} DESC, [{METADATA_KEY}] DESC")
+        return self._electrodes.process(self._metadata_cache)
+
+    def load_vats(self) -> dict[str, str]:
+        """Read the vat of every electrode, and adopt it. Safe off the UI thread.
+
+        Empty when the process log is out of reach, which is what a database
+        holding only a MetaData snapshot looks like. The Vat column is then
+        left off the table rather than shown blank for every row.
+        """
+        self._vats = load_vat_by_marking(self._session)
+        return self._vats
+
+    def reprocess_metadata(self) -> pd.DataFrame:
+        """Re-run the processor over the last read — no database round trip.
+
+        A QC-board move only changes the status override, so re-querying ~12k
+        rows to see it would be a second of latency for nothing.
+        """
+        if self._metadata_cache is None:
+            return self.get_metadata()
+        return self._electrodes.process(self._metadata_cache)
+
+    def get_qc_board_store(self) -> QcBoardDbStore:
+        """The QC board the GUI mutates; shared with the status override."""
+        return self._qc_board
+
+    # ---- SEM EDX ------------------------------------------------------
+    def get_sem_edx_generations(self) -> list[str]:
+        """The generations there is data for, oldest first, one tab each."""
+        return sem_db.load_generations(self._session) or [DEFAULT_GENERATION]
+
+    def get_sem_edx_types(self, generation: str = DEFAULT_GENERATION) -> list[str]:
+        """The electrode types one generation's layout describes."""
+        return list(self._layout_of(generation))
+
+    def get_sem_edx_layout(self, generation: str = DEFAULT_GENERATION
+                           ) -> dict[str, list[str]]:
+        """Which quantities each electrode type holds, in the sheet's order.
+
+        Gen 3.1 measures Ni and S; Gen 4.1 adds Co, and C and N on its cathodes.
+        Two generations, two sets of columns, from one piece of code.
+        """
+        return {key: list(value) for key, value in self._layout_of(generation).items()}
+
+    def get_sem_edx(self, generation: str, electrode_type: str) -> pd.DataFrame:
+        """One row per SEM sample of one electrode type of one generation.
+
+        Read from the CSV rather than the database, and cached in its raw form
+        so a re-process after an import needs no file read.
+        """
+        return self._sem_edx_processor(generation, electrode_type).process(
+            self._sem_edx_rows(generation, electrode_type))
+
+    def get_sem_edx_measurements(self, generation: str, electrode_type: str,
+                                 electrode: str, position: str) -> pd.DataFrame:
+        """The individual measurements behind one sample, for the detail view."""
+        return self._sem_edx_processor(generation, electrode_type).measurements(
+            self._sem_edx_rows(generation, electrode_type), electrode, position)
+
+    def _layout_of(self, generation: str) -> dict[str, list[str]]:
+        """One generation's layout, read once from config.json.
+
+        Which quantities a sheet shows is presentation, not measurement, so it
+        is configuration rather than a table: no query can derive it, since
+        five elements give ten possible ratios and a sheet shows five of them.
+        """
+        key = str(generation).strip()
+        if key not in self._sem_edx_layouts:
+            self._sem_edx_layouts[key] = app_config.sem_edx_layout(key)
+        return self._sem_edx_layouts[key]
+
+    def _sem_edx_processor(self, generation: str,
+                           electrode_type: str) -> SemEdxProcessor:
+        """One processor per generation and type, built from that sheet's layout."""
+        key = (str(generation).strip(), str(electrode_type).strip().upper())
+        if key not in self._sem_edx_processors:
+            self._sem_edx_processors[key] = SemEdxProcessor(
+                self._layout_of(key[0]).get(key[1]))
+        return self._sem_edx_processors[key]
+
+    def _sem_edx_rows(self, generation: str, electrode_type: str) -> pd.DataFrame:
+        """The measurements of one electrode type, in stored order."""
+        df = self._sem_edx_measurements(generation)
+        if df.empty:
+            return df
+        column = str(SemEdxColumns.ELECTRODE_TYPE)
+        match = df[column].astype(str).str.strip().str.upper() == str(
+            electrode_type).strip().upper()
+        return df[match]
+
+    def import_sem_edx_folder(self, generation: str, folder, ask_type=None,
+                              pick_images=None) -> tuple[ParsedFolder, list[str]]:
+        """Read a result folder into the database.
+
+        Which tab a sample lands on is decided by its electrode type, looked up
+        in dbo.MetaData from the marking, so a cathode folder appears under
+        Cathodes and an anode under Anodes with nobody choosing.
+
+        Args:
+            generation: Which generation the samples belong to.
+            folder: The result folder, named for the electrode.
+            ask_type: ``(electrode, choices) -> str | None``, called only when
+                the database has never heard of the marking. Kept as a callable
+                so this layer stays Qt-free, the same way the driver install
+                prompt works. Returning None leaves the sample untyped, and it
+                is reported rather than filed somewhere arbitrary.
+            pick_images: ``(electrode, position, candidates, suggested) -> list``,
+                which captures in the folder belong to each sample. Also a
+                callable for the same reason. Returning None keeps the
+                suggestion.
+
+        Returns:
+            The parse result and the samples skipped as already present. A
+            sample is identified by its electrode *and* position: one electrode
+            can be mapped at up to five positions, so the marking alone would
+            refuse legitimate imports.
+        """
+        expected = {symbol for layout in self._layout_of(generation).values()
+                    for quantity in quantities(layout)
+                    for symbol in quantity.elements}
+        result = parse_result_folder(folder, sorted(expected))
+        if not result.measurements:
+            return result, []
+
+        existing = self._sem_edx_measurements(generation)
+        electrode_column, position_column = SAMPLE_KEY
+        known = set(zip(existing[electrode_column].astype(str).str.strip(),
+                        existing[position_column].astype(str).str.strip()))
+
+        # Resolved once per electrode, so the operator is asked at most once for
+        # a folder rather than once per measurement.
+        types = self._resolve_types(
+            {m.electrode for m in result.measurements}, result, ask_type,
+            generation)
+        result.electrode_types = dict(types)
+
+        # Asked once per sample, not once per measurement: the three points of
+        # a sample share their captures.
+        images = self._resolve_images(result, known, pick_images)
+
+        fresh, skipped = [], []
+        for measurement in result.measurements:
+            key = (measurement.electrode, measurement.position)
+            if key in known:
+                if key not in skipped:
+                    skipped.append(key)
+                continue
+            fresh.append(measurement)
+
+        # Nothing is written until the folder can be stored in a form everybody
+        # can open. A personal path would look like a successful import and then
+        # show captures to one machine.
+        folder = portable_folder(result.folder, self._ask_image_root) if fresh else ""
+        if fresh and not folder:
+            result.problems.append(
+                f"{result.folder.name} is not inside the shared SEM images "
+                f"library, or the library could not be found on this machine, "
+                f"so nothing was imported. Import it from the synced library, "
+                f"or point the app at the library when it asks.")
+            return result, [f"{e} {p}" for e, p in skipped]
+
+        if fresh:
+            self._store_sem_edx(generation, folder, result, fresh, types, images)
+        return result, [f"{e} {p}" for e, p in skipped]
+
+    def _store_sem_edx(self, generation: str, folder: str, result: ParsedFolder,
+                       fresh: list, types: dict[str, str],
+                       images: dict[tuple[str, str], list[str]]) -> None:
+        """Write the newly parsed samples.
+
+        One call per electrode rather than per measurement: a folder can name
+        more than one, and each is its own row in sem_electrode.
+        """
+        for electrode in dict.fromkeys(m.electrode for m in fresh):
+            electrode_type = types.get(electrode, "")
+            if not electrode_type:
+                continue        # already reported by _resolve_types
+            sem_db.import_measurements(
+                self._session, generation, electrode, electrode_type, folder,
+                [m for m in fresh if m.electrode == electrode], images)
+        # Re-read rather than echo: the database fills in what it normalises.
+        self._sem_edx_caches.pop(generation, None)
+
+    def sem_edx_elements(self, generation: str, electrode_type: str) -> list[str]:
+        """Which elements this generation measures on this electrode type.
+
+        The layout's quantities minus the ratios: a ratio is arithmetic over two
+        elements, never typed in, which is why the sample window will not let
+        one be edited either.
+        """
+        quantities = self._layout_of(generation).get(
+            str(electrode_type).strip().upper(), [])
+        return [q for q in quantities if RATIO_SEPARATOR not in str(q)]
+
+    def add_sem_edx_sample(self, generation: str, electrode: str, position: str,
+                           readings: dict, electrode_type: str = "",
+                           zoom: str = "", date: str = "", folder: str = "",
+                           images=None) -> str:
+        """Record one sample that was typed in rather than parsed.
+
+        For a result folder the parser could make nothing of: the numbers are on
+        screen in front of the operator either way, and refusing them because a
+        Word report is malformed loses the measurement, not just the file.
+
+        Args:
+            readings: ``{point: {'Ni': 24.5, ...}}``, the points as typed. A
+                blank stays out of the dict and is stored as missing rather
+                than as a zero.
+            electrode_type: Looked up from the marking when not given, the same
+                way an import decides which tab a sample lands on.
+
+        Returns the electrode type it was filed under. Raises if that cannot be
+        settled, since a sample with no type shows on no tab at all.
+        """
+        electrode = normalize_marking(electrode)
+        position = str(position).strip()
+        if not electrode or not position:
+            raise ValueError("An electrode and a position are both needed.")
+
+        electrode_type = (str(electrode_type).strip().upper()
+                          or self.get_electrode_type(electrode).upper())
+        if electrode_type not in self._layout_of(generation):
+            raise ValueError(
+                f"{electrode} is not a type {generation} has a tab for "
+                f"({electrode_type or 'unknown'}), so the sample would show "
+                f"nowhere.")
+
+        measurements = [
+            ParsedMeasurement(
+                electrode=electrode, position=position, point=int(point),
+                elements={str(symbol): float(value)
+                          for symbol, value in (values or {}).items()
+                          if value is not None},
+                date=str(date or ""), zoom=str(zoom or ""),
+                source="typed in by hand")
+            for point, values in sorted((readings or {}).items())]
+        if not measurements:
+            raise ValueError("No measurement points were given.")
+
+        # Shortened against the synced library root, exactly as an import
+        # does it: an absolute path starts with one operator's user folder and
+        # would open for nobody else.
+        stored = portable_folder(folder, self._ask_image_root) if folder else ""
+        sem_db.import_measurements(
+            self._session, generation, electrode, electrode_type,
+            stored, measurements,
+            {(electrode, position): list(images or [])})
+        # Re-read rather than echo: the database fills in what it normalises.
+        self._sem_edx_caches.pop(generation, None)
+        return electrode_type
+
+    def update_sem_edx_sample(self, generation: str, electrode: str,
+                              position: str, values: dict[str, str]) -> bool:
+        """Set the by-hand fields on every measurement of one sample.
+
+        The zoom, operator and note belong to the sample rather than to any one
+        point, so all of its rows carry the same value.
+        """
+        df = self._sem_edx_measurements(generation)
+        electrode_column, position_column = SAMPLE_KEY
+        match = ((df[electrode_column].astype(str).str.strip() == str(electrode).strip())
+                 & (df[position_column].astype(str).str.strip() == str(position).strip()))
+        if not match.any():
+            return False
+
+        for column, value in values.items():
+            if column in df.columns:
+                df.loc[match, column] = value
+
+        # The procedure writes all three fields, so a caller setting one has to
+        # send the other two back as they are. Passing only the operator used to
+        # blank the zoom the import had just read off the image sidecars.
+        current = df.loc[match].iloc[0]
+
+        def field(column: str) -> str:
+            column = str(column)
+            if column in values:
+                return str(values.get(column) or "")
+            return "" if column not in df.columns else str(current.get(column) or "")
+
+        sem_db.update_sample(
+            self._session, generation, electrode, position,
+            zoom=field(SemEdxColumns.ZOOM),
+            operator=field(SemEdxColumns.OPERATOR),
+            note=field(SemEdxColumns.NOTE))
+        self._sem_edx_caches[generation] = df
+        return True
+
+    def delete_sem_edx_sample(self, generation: str, electrode: str,
+                              position: str) -> bool:
+        """Remove one sample and every measurement taken at it.
+
+        False when there was no such sample. Only what was read off the
+        captures goes: the captures themselves live in the shared library and
+        are left alone.
+        """
+        df = self._sem_edx_measurements(generation)
+        electrode_column, position_column = SAMPLE_KEY
+        match = ((df[electrode_column].astype(str).str.strip() == str(electrode).strip())
+                 & (df[position_column].astype(str).str.strip() == str(position).strip()))
+        if not match.any():
+            return False
+
+        if not sem_db.delete_sample(self._session, generation, electrode,
+                                    position):
+            return False
+        self._sem_edx_caches[generation] = df[~match].reset_index(drop=True)
+        return True
+
+    def update_sem_edx_measurements(self, generation: str, electrode: str,
+                                    position: str,
+                                    values: dict[int, dict[str, float | None]]) -> bool:
+        """Correct the measured percentages of individual points of one sample.
+
+        Args:
+            values: ``{point: {element column: value or None}}``. None means a
+                reading that was never taken, which is stored as missing rather
+                than as a zero.
+
+        Only the percentages are written. Every ratio and average is arithmetic
+        over them, so correcting one figure corrects everything derived from
+        it, which is why the ratios are not editable in the first place.
+        """
+        df = self._sem_edx_measurements(generation)
+        electrode_column, position_column = SAMPLE_KEY
+        sample = ((df[electrode_column].astype(str).str.strip() == str(electrode).strip())
+                  & (df[position_column].astype(str).str.strip() == str(position).strip()))
+        if not sample.any():
+            return False
+
+        point_column = str(SemEdxColumns.MEASUREMENT)
+        changed = False
+        for point, readings in (values or {}).items():
+            match = sample & (pd.to_numeric(df[point_column], errors="coerce") == point)
+            if not match.any():
+                continue
+            for column, value in readings.items():
+                if column not in df.columns:
+                    continue
+                df.loc[match, column] = value
+                changed = True
+                sem_db.set_reading(self._session, generation, electrode,
+                                   position, point, element_symbol(column),
+                                   value)
+
+        if changed:
+            self._sem_edx_caches[generation] = df
+        return changed
+
+    def sem_images_available(self, folder) -> bool:
+        """Whether a stored folder can be found on this machine.
+
+        Asked once per row while a table is drawn, so it must stay cheap: it is
+        a path join and one directory check, about 0.016ms. Deliberately does
+        NOT offer the folder picker, since a table being painted is no place to
+        interrupt somebody with a dialog.
+        """
+        return bool(folder) and resolve_folder(folder) is not None
+
+    def list_sem_edx_images(self, folder, position: str = "", images: str = "") -> list:
+        """The captures of one sample, for the image viewer.
+
+        The stored folder is a tail under the shared library, so it is resolved
+        against this machine's root before anything is read. The recorded
+        filenames decide what belongs to the sample; the position is the
+        fallback for rows stored before that column existed.
+        """
+        resolved = resolve_folder(folder, self._ask_image_root)
+        if resolved is None:
+            return []
+        return result_images(resolved, position=position,
+                             names=split_images(images))
+
+    def get_electrode_type(self, marking: str) -> str:
+        """CATHODE / ANODE for one marking, from dbo.MetaData. '' if unknown.
+
+        Lets an imported sample carry its type without anyone typing it: the
+        result folder names the electrode, and the database already knows what
+        that electrode is.
+        """
+        if self._metadata_cache is None or self._metadata_cache.empty:
+            return ""
+        # Compared through the normaliser, since Gen 3.1 pads its markings and
+        # dbo.MetaData does not: B000897 has to find B897.
+        markings = self._metadata_cache[str(ElectrodeColumns.MARKING)].astype(
+            str).map(normalize_marking)
+        match = self._metadata_cache[markings == normalize_marking(marking)]
+        if match.empty:
+            return ""
+        return str(match.iloc[0][str(ElectrodeColumns.FULL_NAME)]).strip()
+
+    def _resolve_types(self, electrodes: set[str], result: ParsedFolder,
+                       ask_type, generation: str = DEFAULT_GENERATION
+                       ) -> dict[str, str]:
+        """The electrode type of each marking, asking only when the DB is silent.
+
+        A sample whose type ends up empty would sit in the file showing on no
+        tab at all, so every case that leads there is reported.
+        """
+        choices = list(self._layout_of(generation))
+        resolved: dict[str, str] = {}
+
+        for electrode in sorted(electrodes):
+            electrode_type = self.get_electrode_type(electrode).upper()
+            if electrode_type and electrode_type not in choices:
+                result.problems.append(
+                    f"{electrode} is recorded as a {electrode_type}, and there "
+                    f"is no tab for that, so it will not appear anywhere.")
+            elif not electrode_type:
+                electrode_type = str(
+                    ask_type(electrode, choices) if callable(ask_type) else "").upper()
+                if not electrode_type:
+                    result.problems.append(
+                        f"{electrode} is not in the database and no type was "
+                        f"chosen, so it will not appear on either tab.")
+            resolved[electrode] = electrode_type
+        return resolved
+
+    def _resolve_images(self, result: ParsedFolder, known: set,
+                        pick_images) -> dict[tuple[str, str], list[str]]:
+        """Which captures belong to each sample being imported.
+
+        The folder holds every position mapped on the electrode. What the
+        filenames say about position is the suggestion; the operator has the
+        last word, since a filename is not always right about which spot a
+        capture came from.
+        """
+        candidates = candidate_images(result.folder)
+        if not candidates:
+            return {}
+
+        chosen: dict[tuple[str, str], list[str]] = {}
+        samples = [(m.electrode, m.position) for m in result.measurements]
+        for key in dict.fromkeys(s for s in samples if s not in known):
+            electrode, position = key
+            suggested = [p.name for p in
+                         result_images(result.folder, electrode, position)]
+            picked = None
+            if callable(pick_images):
+                picked = pick_images(electrode, position,
+                                     list(candidates), suggested or
+                                     [p.name for p in candidates])
+            if picked is None:
+                picked = suggested or [p.name for p in candidates]
+            chosen[key] = list(picked)
+        return chosen
+
+    def _sem_edx_measurements(self, generation: str) -> pd.DataFrame:
+        """One generation's rows, read once and kept until something writes."""
+        key = str(generation).strip()
+        if key not in self._sem_edx_caches:
+            self._sem_edx_caches[key] = sem_db.load_sem_edx(self._session, key)
+        return self._sem_edx_caches[key]
+
+    def _superseded_by_hand(self) -> set[str]:
+        """Electrodes whose frozen verdict a later hand correction replaced.
+
+        Both cover the same electrode and both are settled, so the later
+        statement is the one that stands: a frozen verdict beats an older
+        correction, a correction beats the verdict it was written to fix.
+        Without this the archive silently won every time and a by-hand edit on
+        a finalised electrode looked like it did nothing.
+
+        Both timestamps come back through the same normalizer, in UTC, so they
+        compare as text.
+        """
+        if not self._manual_edits:
+            return set()
+        return {marking for marking, frozen_at in self._qc_board.archived_times().items()
+                if self._manual_edits.get(marking, "") > frozen_at}
+
+    def _settled_statuses(self) -> dict[str, str]:
+        """Statuses that no longer depend on the propagation rules.
+
+        The finalised sweeps, except where the operator corrected that
+        electrode by hand afterwards.
+        """
+        superseded = self._superseded_by_hand()
+        return {marking: status
+                for marking, status in self._qc_board.archived_statuses().items()
+                if marking not in superseded}
+
+    def _settled_priorities(self) -> set[str]:
+        """Frozen test-first flags, minus the superseded ones.
+
+        The flag travels with the verdict that produced it. Replacing that
+        verdict by hand and leaving "Test first" stuck beside the new status
+        tells an operator to go and test an electrode on the strength of a
+        decision that no longer applies to it.
+        """
+        return self._qc_board.archived_priorities() - self._superseded_by_hand()
+
+    def _known_markings(self) -> list[str]:
+        """Every electrode the app knows about, from the last read."""
+        if self._metadata_cache is None:
+            self.get_metadata()
+        if self._metadata_cache is None or self._metadata_cache.empty:
+            return []
+        column = str(ElectrodeColumns.MARKING)
+        return list(self._metadata_cache[column].astype(str).str.strip())
+
+    def preview_finalise(self, marking: str | None = None) -> tuple[int, int]:
+        """``(decided electrodes, electrodes that would be frozen)``.
+
+        Pass a marking to preview finalising just that one.
+        """
+        frozen, _priorities = self._finalise_plan(marking)
+        decided = self._decisions_for(marking)
+        return len(decided), len(frozen)
+
+    def finalise_qc_decisions(self, marking: str | None = None) -> int:
+        """Freeze decided electrodes and everything their sweeps reached.
+
+        Without a marking this takes every decided electrode. With one it takes
+        that electrode alone, leaving the rest of the board live. Afterwards
+        those statuses no longer move when other decisions change around them.
+        """
+        frozen, priorities = self._finalise_plan(marking)
+        if not frozen:
+            return 0
+        consumed = {marking} if marking else None
+        return self._qc_board.archive(frozen, priorities, consumed)
+
+    def _decisions_for(self, marking: str | None) -> dict[str, str]:
+        """Every board decision, or just the one named."""
+        decisions = self._qc_board.status_overrides()
+        if marking is None:
+            return decisions
+        return {marking: decisions[marking]} if marking in decisions else {}
+
+    def _finalise_plan(self, marking: str | None = None
+                       ) -> tuple[dict[str, tuple[str, str]], set[str]]:
+        """What a finalise would freeze: ``{marking: (status, caused_by)}``.
+
+        The electrodes a decision swept onto are only recorded when the status
+        actually differs from the settled base: one already reading Released for
+        another reason is not re-recorded.
+
+        THE DECIDED ELECTRODES ARE ALWAYS RECORDED, even when their status does
+        not move. Finalising is what takes a card off the board, and the archive
+        is what consumes it. Skipping an electrode that already read Released
+        left "mark all as done" doing nothing at all, with the card stuck in
+        Release for good, which is what an operator sees as the button being
+        broken.
+        """
+        decisions = self._decisions_for(marking)
+        if not decisions:
+            return {}, set()
+        markings = self._known_markings()
+        if not markings:
+            return {}, set()
+
+        base = self._electrodes.base_status()
+        # The same inputs the tab renders with. A finalise that swept differently
+        # would freeze statuses nobody was shown.
+        effective, sources, priorities = propagate_detailed(
+            markings, base, decisions, vats=self._vats,
+            cracked=self._qc_board.cracked_electrodes())
+        not_tested = str(ElectrodeStatus.NOT_TESTED)
+        frozen = {
+            marking: (status, sources.get(marking, marking))
+            for marking, status in effective.items()
+            if status != base.get(marking, not_tested) or marking in decisions
+        }
+        return frozen, {m for m in priorities if m in frozen}
+
+    def undo_last_action(self) -> bool:
+        """Reverse the most recent board change, whatever kind it was."""
+        return self._qc_board.undo()
+
+    def set_electrode_status(self, marking: str, status: str) -> None:
+        """Set one electrode's status by hand. Never propagates.
+
+        There is no way to clear one: the value underneath was overwritten, and
+        a status that came from the tested list cannot be worked out again from
+        the database. To change a hand set status you set another one.
+
+        The in-memory base is patched too, so the tab shows it immediately
+        rather than at the next restart.
+        """
+        self._qc_board.set_electrode_status(marking, status)
+        self._electrodes.set_base_status(marking, status)
+        # Stamped the way the database would: this correction is newer than any
+        # verdict already frozen for it, so it is the one the tab shows.
+        self._manual_edits[str(marking).strip()] = dt.datetime.now(
+            dt.timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+
+    def get_metadata_update_callback(self):
+        return self._metadata_poller.make_update_callback(
+            _METADATA_ENTITY, self._reload_electrodes, "data")
+
+    def _metadata_watermarks(self) -> dict:
+        """Everything the Electrodes tab's Status column depends on.
+
+        Three sources, because a status is not just a stored value:
+
+            dbo.MetaData        which electrodes exist at all
+            electrode_status    what the ranges and the by-hand edits say
+            qc_board            live decisions, which SWEEP onto neighbours
+
+        The third one is easy to forget and was: move a card to Scrapped on one
+        machine and up to five electrodes change status on every other machine,
+        without a row of dbo.MetaData or electrode_status moving. Watching only
+        the first two left the tab stale until somebody visited the QC tab.
+
+        The poller only compares watermarks for equality, so a tuple of the
+        three is as good as one number.
+        """
+        sql = (f"SELECT MAX([{METADATA_KEY}]), COUNT(*) "
+               f"FROM [{METADATA_SCHEMA}].[{METADATA_TABLE}] "
+               f"WHERE {METADATA_FILTER}")
+        row = self._poll(sql)
+        produced = (int(row[0] or 0), int(row[1] or 0))
+        # Kept for the reload that follows, which uses it to decide whether the
+        # 11k rows need reading again or only reprocessing. Set here rather than
+        # queried again, since the poller calls the two back to back.
+        self._produced_seen = produced
+
+        qc = self._qc_watermarks()
+        return {_METADATA_ENTITY: (produced,
+                                   qc.get(_ELECTRODE_STATUS_ENTITY),
+                                   qc.get(_QC_BOARD_ENTITY))}
+
+    def _reload_electrodes(self) -> pd.DataFrame:
+        """The Electrodes tab's frame, after whatever moved.
+
+        Runs on the polling thread. The board is re-read first, because a live
+        decision on another machine changes what this frame says: the statuses
+        are computed from it, not stored.
+
+        The 11k rows are only fetched again when dbo.MetaData itself moved,
+        which is rare. A board move costs a reprocess of the cached rows, about
+        20ms, instead of a second of query.
+        """
+        # Ignored when it predates our own write, which would otherwise show
+        # the statuses of a board the operator has already changed.
+        self._qc_board.apply(self._qc_board.fetch())
+        if self._metadata_cache is None or self._produced_seen != self._produced_applied:
+            self._produced_applied = self._produced_seen
+            # New electrodes have new vats. Only on this path, which is the
+            # rare one: a board move does not change what was plated where.
+            self.load_vats()
+            return self.get_metadata()
+        return self.reprocess_metadata()
+
+    def _qc_watermarks(self) -> dict:
+        """Poll qc_data.vw_change_watermark → {entity: (row_version, count)}.
+
+        An entity with no rows at all is simply absent from the view, which
+        reads as None here and still compares unequal the moment its first row
+        arrives.
+        """
+        rows = self._poll_all(
+            f"SELECT entity, max_row_version, row_count "
+            f"FROM [{QC_SCHEMA}].[vw_change_watermark]")
+        return {r[0]: (int(r[1]), int(r[2])) for r in rows}
+
+    def get_qc_board_update_callback(self):
+        """Reload the board when another machine moves a card."""
+        return self._qc_poller.make_update_callback(
+            _QC_BOARD_ENTITY, self._reload_qc_board, "data")
+
+    def _reload_qc_board(self) -> dict:
+        """Read the whole board and hand it back.
+
+        Read here, adopted by the GUI: this runs on the polling thread, and
+        filling the shared store from it could let a render catch it half
+        populated.
+        """
+        return self._qc_board.fetch()
+
+    def get_sem_edx_update_callback(self):
+        """Reload every SEM sub tab when another machine imports a folder."""
+        return self._qc_poller.make_update_callback(
+            _SEM_EDX_ENTITY, self._reload_sem_edx, "data")
+
+    def _reload_sem_edx(self) -> dict[str, dict[str, pd.DataFrame]]:
+        """``{generation: {electrode type: frame}}`` after dropping the cache."""
+        self._sem_edx_caches.clear()
+        return {generation: {electrode_type: self.get_sem_edx(generation, electrode_type)
+                             for electrode_type in self.get_sem_edx_types(generation)}
+                for generation in self.get_sem_edx_generations()}
+
+    # ---- polling ------------------------------------------------------
+    def _poll_connection(self):
+        """This thread's polling connection, opened once (lazily).
+
+        Opening a fresh connection every few seconds per tab was the original
+        UI-lag source, and a connection cannot be shared between the worker
+        thread that polls and the main thread that writes, so there is one
+        each.
+        """
+        conn = getattr(self._poll_local, "conn", None)
+        if conn is None:
+            conn = self._poll_local.conn = self._connect()
+        return conn
+
+    def _poll(self, sql: str):
+        """Run one watermark query on the reused connection, returning its first
+        row. If the connection dropped (Azure closes idle ones), reconnect and
+        retry once."""
+        import pyodbc
+
+        try:
+            cursor = self._poll_connection().cursor()
+            cursor.execute(sql)
+            return cursor.fetchone()
+        except pyodbc.Error:
+            self._close_poll_conn()  # stale connection — reconnect and retry once
+            cursor = self._poll_connection().cursor()
+            cursor.execute(sql)
+            return cursor.fetchone()
+
+    def _poll_all(self, sql: str) -> list:
+        """Every row of one watermark query, on the reused connection."""
+        import pyodbc
+
+        try:
+            cursor = self._poll_connection().cursor()
+            cursor.execute(sql)
+            return cursor.fetchall()
+        except pyodbc.Error:
+            self._close_poll_conn()  # stale connection — reconnect and retry once
+            cursor = self._poll_connection().cursor()
+            cursor.execute(sql)
+            return cursor.fetchall()
+
+    def _close_poll_conn(self) -> None:
+        """Drop this thread's polling connection."""
+        conn = getattr(self._poll_local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._poll_local.conn = None
+
+    def close(self) -> None:
+        """Release the polling connection (call on app shutdown)."""
+        self._close_poll_conn()

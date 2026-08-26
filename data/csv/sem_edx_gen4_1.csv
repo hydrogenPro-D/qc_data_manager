@@ -1,0 +1,439 @@
+electrode,electrode_type,position,zoom,measurement,operator,note,date,folder,images,c_pct,co_pct,n_pct,ni_pct,s_pct
+B13871,ANODE,top right,x100,1,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13871,A567_1_1337.tif|A567_2_1338.tif|A567_3_1339.tif,,0.4,,38,8.6
+B13871,ANODE,top right,x100,2,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13871,A567_1_1337.tif|A567_2_1338.tif|A567_3_1339.tif,,0.4,,39,8.9
+B13871,ANODE,top right,x100,3,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13871,A567_1_1337.tif|A567_2_1338.tif|A567_3_1339.tif,,0.4,,39.5,8.6
+B13872,ANODE,top right,x100,1,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13872,A851_1_1343.tif|A851_2_1344.tif|A851_3_1345.tif,,0.8,,35.1,8.6
+B13872,ANODE,top right,x100,2,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13872,A851_1_1343.tif|A851_2_1344.tif|A851_3_1345.tif,,0.7,,37.8,8.2
+B13872,ANODE,top right,x100,3,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13872,A851_1_1343.tif|A851_2_1344.tif|A851_3_1345.tif,,0.7,,36.2,8.3
+B13873,ANODE,top right,x100,1,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13873,B13873_1_1340.tif|B13873_2_1341.tif|B13873_3_1342.tif,,0.7,,33,7.2
+B13873,ANODE,top right,x100,2,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13873,B13873_1_1340.tif|B13873_2_1341.tif|B13873_3_1342.tif,,0.7,,32.6,7.8
+B13873,ANODE,top right,x100,3,Emil Andersen,"Large cracks Batch did not receive full plating recipe, hence, it's no surprise that coat lacks adhesion.",,B productionline\Gen4.1\B13873,B13873_1_1340.tif|B13873_2_1341.tif|B13873_3_1342.tif,,0.8,,30.1,7.3
+B13881,ANODE,top right,x100,1,Oniel Rhe Lauron,Rigid and Fine,,B productionline\Gen4.1\B13881,B13881_TR_1_1375.tif|B13881_TR_2_1376.tif|B13881_TR_3_1377.tif,,0.7,,33.4,9.4
+B13881,ANODE,top right,x100,2,Oniel Rhe Lauron,Rigid and Fine,,B productionline\Gen4.1\B13881,B13881_TR_1_1375.tif|B13881_TR_2_1376.tif|B13881_TR_3_1377.tif,,0.5,,34.5,9.8
+B13881,ANODE,top right,x100,3,Oniel Rhe Lauron,Rigid and Fine,,B productionline\Gen4.1\B13881,B13881_TR_1_1375.tif|B13881_TR_2_1376.tif|B13881_TR_3_1377.tif,,0.6,,32.9,9.7
+B13882,ANODE,top right,x100,1,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B13882,B13882_TR_1_1380.tif|B13882_TR_2_1381.tif|B13882_TR_3_1382.tif,,0.6,,31.9,9
+B13882,ANODE,top right,x100,2,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B13882,B13882_TR_1_1380.tif|B13882_TR_2_1381.tif|B13882_TR_3_1382.tif,,0.6,,32,9.4
+B13882,ANODE,top right,x100,3,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B13882,B13882_TR_1_1380.tif|B13882_TR_2_1381.tif|B13882_TR_3_1382.tif,,0.5,,28.2,7.5
+B13883,ANODE,top right,x100,1,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B13883,B13883_TR_1_1383.tif|B13883_TR_2_1384.tif|B13883_TR_3_1385.tif,,0.7,,29.2,8.5
+B13883,ANODE,top right,x100,2,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B13883,B13883_TR_1_1383.tif|B13883_TR_2_1384.tif|B13883_TR_3_1385.tif,,0.8,,28.9,8.6
+B13883,ANODE,top right,x100,3,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B13883,B13883_TR_1_1383.tif|B13883_TR_2_1384.tif|B13883_TR_3_1385.tif,,0.8,,31.5,9.2
+B13892,ANODE,top right,x100,1,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B13892,B13892_TR_1_1398.tif|B13892_TR_2_1399.tif|B13892_TR_3_1400.tif,,0.7,,29.3,8.9
+B13892,ANODE,top right,x100,2,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B13892,B13892_TR_1_1398.tif|B13892_TR_2_1399.tif|B13892_TR_3_1400.tif,,0.8,,32.5,9.7
+B13892,ANODE,top right,x100,3,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B13892,B13892_TR_1_1398.tif|B13892_TR_2_1399.tif|B13892_TR_3_1400.tif,,0.8,,30.7,8.9
+B13893,ANODE,top right,x100,1,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B13893,B13893_TR_1_1401.tif|B13893_TR_2_1402.tif|B13893_TR_3_1403.tif,,0.6,,27.1,8.2
+B13893,ANODE,top right,x100,2,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B13893,B13893_TR_1_1401.tif|B13893_TR_2_1402.tif|B13893_TR_3_1403.tif,,0.6,,28.8,8.1
+B13893,ANODE,top right,x100,3,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B13893,B13893_TR_1_1401.tif|B13893_TR_2_1402.tif|B13893_TR_3_1403.tif,,0.7,,30.4,9.3
+B13894,ANODE,top right,x100,1,Emil Andersen,Lumps on the surface (espically close to the edges),,B productionline\Gen4.1\B13894,B13894_TR_1_1404.tif|B13894_TR_2_1405.tif|B13894_TR_3_1406.tif,,0.8,,32,9.6
+B13894,ANODE,top right,x100,2,Emil Andersen,Lumps on the surface (espically close to the edges),,B productionline\Gen4.1\B13894,B13894_TR_1_1404.tif|B13894_TR_2_1405.tif|B13894_TR_3_1406.tif,,0.8,,30.7,9.1
+B13894,ANODE,top right,x100,3,Emil Andersen,Lumps on the surface (espically close to the edges),,B productionline\Gen4.1\B13894,B13894_TR_1_1404.tif|B13894_TR_2_1405.tif|B13894_TR_3_1406.tif,,0.7,,24,8.1
+B13895,ANODE,top right,x100,1,Emil Andersen,Cracks,,B productionline\Gen4.1\B13895,B13895_TR_1_1407.tif|B13895_TR_2_1408.tif|B13895_TR_3_1409.tif,,0.7,,29.8,8.9
+B13895,ANODE,top right,x100,2,Emil Andersen,Cracks,,B productionline\Gen4.1\B13895,B13895_TR_1_1407.tif|B13895_TR_2_1408.tif|B13895_TR_3_1409.tif,,0.8,,31.8,9.1
+B13895,ANODE,top right,x100,3,Emil Andersen,Cracks,,B productionline\Gen4.1\B13895,B13895_TR_1_1407.tif|B13895_TR_2_1408.tif|B13895_TR_3_1409.tif,,0.6,,29.8,8.7
+B13896,ANODE,top right,x100,1,Emil Andersen,Cracks,,B productionline\Gen4.1\B13896,B13896_TR_1_1410.tif|B13896_TR_2_1411.tif|B13896_TR_3_1412.tif,,0.5,,29.4,8.3
+B13896,ANODE,top right,x100,2,Emil Andersen,Cracks,,B productionline\Gen4.1\B13896,B13896_TR_1_1410.tif|B13896_TR_2_1411.tif|B13896_TR_3_1412.tif,,0.6,,26,8.2
+B13896,ANODE,top right,x100,3,Emil Andersen,Cracks,,B productionline\Gen4.1\B13896,B13896_TR_1_1410.tif|B13896_TR_2_1411.tif|B13896_TR_3_1412.tif,,0.6,,26.8,8.6
+B14133,ANODE,top right,x100,1,Julia Marchlewska,"31/7-2026. 2nd run in new vat 28 Testing dummy electrode plated in 3,5 ph. Few Microcracks",,B productionline\Gen4.1\B14133,B14133_TR_1_1628.tif|B14133_TR_2_1629.tif|B14133_TR_3_1631.tif,,1,,28.6,8.6
+B14133,ANODE,top right,x100,2,Julia Marchlewska,"31/7-2026. 2nd run in new vat 28 Testing dummy electrode plated in 3,5 ph. Few Microcracks",,B productionline\Gen4.1\B14133,B14133_TR_1_1628.tif|B14133_TR_2_1629.tif|B14133_TR_3_1631.tif,,0.9,,26.7,8.2
+B14133,ANODE,top right,x100,3,Julia Marchlewska,"31/7-2026. 2nd run in new vat 28 Testing dummy electrode plated in 3,5 ph. Few Microcracks",,B productionline\Gen4.1\B14133,B14133_TR_1_1628.tif|B14133_TR_2_1629.tif|B14133_TR_3_1631.tif,,0.8,,21.2,8.1
+B14134,ANODE,top right,x100,1,Julia Marchlewska,"3rd run in new vat 28 Testing dummy electrode plated in 3,73 ph. Few Microcracks",,B productionline\Gen4.1\B14134,B14134_TR_1_1632.tif|B14134_TR_2_1633.tif|B14134_TR_3_1634.tif,,1,,29.3,7.9
+B14134,ANODE,top right,x100,2,Julia Marchlewska,"3rd run in new vat 28 Testing dummy electrode plated in 3,73 ph. Few Microcracks",,B productionline\Gen4.1\B14134,B14134_TR_1_1632.tif|B14134_TR_2_1633.tif|B14134_TR_3_1634.tif,,0.9,,31.3,8.2
+B14134,ANODE,top right,x100,3,Julia Marchlewska,"3rd run in new vat 28 Testing dummy electrode plated in 3,73 ph. Few Microcracks",,B productionline\Gen4.1\B14134,B14134_TR_1_1632.tif|B14134_TR_2_1633.tif|B14134_TR_3_1634.tif,,1,,32.6,8.7
+B14127,ANODE,top right,x100,1,Julia Marchlewska,"1st run in new vat.28 First dummy electrode plated in 3,3 pH. Cracked",,B productionline\Gen4.1\B14127,B14127_TR_1_1624.tif|B14127_TR_1_1641.tif|B14127_TR_2_1625.tif|B14127_TR_2_1642.tif|B14127_TR_3_1626.tif|B14127_TR_3_1643.tif|B14127_TR_4_1627.tif,,1.1,,36.5,10
+B14127,ANODE,top right,x100,2,Julia Marchlewska,"1st run in new vat.28 First dummy electrode plated in 3,3 pH. Cracked",,B productionline\Gen4.1\B14127,B14127_TR_1_1624.tif|B14127_TR_1_1641.tif|B14127_TR_2_1625.tif|B14127_TR_2_1642.tif|B14127_TR_3_1626.tif|B14127_TR_3_1643.tif|B14127_TR_4_1627.tif,,1,,34.5,9.7
+B14127,ANODE,top right,x100,3,Julia Marchlewska,"1st run in new vat.28 First dummy electrode plated in 3,3 pH. Cracked",,B productionline\Gen4.1\B14127,B14127_TR_1_1624.tif|B14127_TR_1_1641.tif|B14127_TR_2_1625.tif|B14127_TR_2_1642.tif|B14127_TR_3_1626.tif|B14127_TR_3_1643.tif|B14127_TR_4_1627.tif,,1,,34.9,10.2
+B13862,CATHODE,top right,x100,1,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B13862,B13862_TR_1__1328.tif|B13862_TR_2__1329.tif|B13862_TR_3_1330.tif,28.4,0.5,10.9,34.4,10
+B13862,CATHODE,top right,x100,2,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B13862,B13862_TR_1__1328.tif|B13862_TR_2__1329.tif|B13862_TR_3_1330.tif,31.1,0.4,13.3,34.2,9.5
+B13862,CATHODE,top right,x100,3,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B13862,B13862_TR_1__1328.tif|B13862_TR_2__1329.tif|B13862_TR_3_1330.tif,28.3,0.5,10.2,32.6,9.4
+B13863,CATHODE,top right,x100,1,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B13863,B13863_TR_1_1331.tif|B13863_TR_2_1332.tif|B13863_TR_3_1333.tif,25,0.5,12.9,23.1,7.9
+B13863,CATHODE,top right,x100,2,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B13863,B13863_TR_1_1331.tif|B13863_TR_2_1332.tif|B13863_TR_3_1333.tif,33.7,0.4,18.6,25.5,8
+B13863,CATHODE,top right,x100,3,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B13863,B13863_TR_1_1331.tif|B13863_TR_2_1332.tif|B13863_TR_3_1333.tif,28.4,0.5,13.8,27,8.2
+B13866,CATHODE,top right,x100,1,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B13866,B13866_TR_1_1334.tif|B13866_TR_2_1335.tif|B13866_TR_3_1336.tif,29,0.5,12.6,25.4,7.1
+B13866,CATHODE,top right,x100,2,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B13866,B13866_TR_1_1334.tif|B13866_TR_2_1335.tif|B13866_TR_3_1336.tif,31.5,0.5,13.4,28.2,7.5
+B13866,CATHODE,top right,x100,3,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B13866,B13866_TR_1_1334.tif|B13866_TR_2_1335.tif|B13866_TR_3_1336.tif,28.2,0.6,12.6,24,7
+B13887,CATHODE,top right,x100,1,Tamas Pakai,Few small cracks,,B productionline\Gen4.1\B13887,B13887_TR_1_1387.tif|B13887_TR_2_1388.tif|B13887_TR_3_1389.tif,34.4,0.6,8.5,29.8,8.5
+B13887,CATHODE,top right,x100,2,Tamas Pakai,Few small cracks,,B productionline\Gen4.1\B13887,B13887_TR_1_1387.tif|B13887_TR_2_1388.tif|B13887_TR_3_1389.tif,30.6,0.7,7.5,29.6,8.4
+B13887,CATHODE,top right,x100,3,Tamas Pakai,Few small cracks,,B productionline\Gen4.1\B13887,B13887_TR_1_1387.tif|B13887_TR_2_1388.tif|B13887_TR_3_1389.tif,32.1,0.7,8.1,29.6,8.4
+B13888,CATHODE,top right,x100,1,Tamas Pakai,Few small cracks,,B productionline\Gen4.1\B13888,B13888_TR_1_1390.tif|B13888_TR_2_1391.tif|B13888_TR_3_1392.tif,30.4,0.5,11.1,27.1,8.3
+B13888,CATHODE,top right,x100,2,Tamas Pakai,Few small cracks,,B productionline\Gen4.1\B13888,B13888_TR_1_1390.tif|B13888_TR_2_1391.tif|B13888_TR_3_1392.tif,30.6,0.6,10.7,25,7.9
+B13888,CATHODE,top right,x100,3,Tamas Pakai,Few small cracks,,B productionline\Gen4.1\B13888,B13888_TR_1_1390.tif|B13888_TR_2_1391.tif|B13888_TR_3_1392.tif,25.5,0.6,10.6,23.3,8.4
+B13891,CATHODE,top right,x100,1,Tamas Pakai,Very few micro cracks,,B productionline\Gen4.1\B13891,B13891_TR_1_1393.tif|B13891_TR_2_1394.tif|B13891_TR_3_1395.tif,29.1,0.6,11.4,30,9.1
+B13891,CATHODE,top right,x100,2,Tamas Pakai,Very few micro cracks,,B productionline\Gen4.1\B13891,B13891_TR_1_1393.tif|B13891_TR_2_1394.tif|B13891_TR_3_1395.tif,30.8,0.6,9.1,28.8,8.3
+B13891,CATHODE,top right,x100,3,Tamas Pakai,Very few micro cracks,,B productionline\Gen4.1\B13891,B13891_TR_1_1393.tif|B13891_TR_2_1394.tif|B13891_TR_3_1395.tif,27.8,0.6,10.9,25.3,8
+B13900,CATHODE,top right,x100,1,Emil Andersen,"Cracks, should do post mortem",,B productionline\Gen4.1\B13900,B13900_TR_1_1413.tif|B13900_TR_2_1414.tif|B13900_TR_3_1415.tif,28.8,0.7,10.9,26.6,8.2
+B13900,CATHODE,top right,x100,2,Emil Andersen,"Cracks, should do post mortem",,B productionline\Gen4.1\B13900,B13900_TR_1_1413.tif|B13900_TR_2_1414.tif|B13900_TR_3_1415.tif,34.9,0.6,14.3,26.8,8.1
+B13900,CATHODE,top right,x100,3,Emil Andersen,"Cracks, should do post mortem",,B productionline\Gen4.1\B13900,B13900_TR_1_1413.tif|B13900_TR_2_1414.tif|B13900_TR_3_1415.tif,31.6,0.6,13.5,27.1,8.1
+B13902,CATHODE,top right,x100,1,Tamas Pakai,,,B productionline\Gen4.1\B13902,B13902_TR_1_1416.tif|B13902_TR_2_1417.tif|B13902_TR_3_1418.tif,29.6,0.8,8.4,29.1,8
+B13902,CATHODE,top right,x100,2,Tamas Pakai,,,B productionline\Gen4.1\B13902,B13902_TR_1_1416.tif|B13902_TR_2_1417.tif|B13902_TR_3_1418.tif,33.4,0.7,10.1,26.5,7.3
+B13902,CATHODE,top right,x100,3,Tamas Pakai,,,B productionline\Gen4.1\B13902,B13902_TR_1_1416.tif|B13902_TR_2_1417.tif|B13902_TR_3_1418.tif,32.7,0.8,8,27,7.2
+B13917,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks,,B productionline\Gen4.1\B13917,B13917_TR_1_1447.tif|B13917_TR_2_1448.tif|B13917_TR_3_1449.tif,29.9,0.7,14.6,25.7,8.2
+B13917,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks,,B productionline\Gen4.1\B13917,B13917_TR_1_1447.tif|B13917_TR_2_1448.tif|B13917_TR_3_1449.tif,28,0.8,13.6,29.9,8.8
+B13917,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks,,B productionline\Gen4.1\B13917,B13917_TR_1_1447.tif|B13917_TR_2_1448.tif|B13917_TR_3_1449.tif,28.3,0.7,10.7,24.7,7.4
+B13913,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks (given as anode but tested as a cathode),,B productionline\Gen4.1\B13913,B13913_TR_1_1450.tif|B13913_TR_2_1451.tif|B13913_TR_3_1452.tif,32,0.8,11.2,29.7,8.7
+B13913,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks (given as anode but tested as a cathode),,B productionline\Gen4.1\B13913,B13913_TR_1_1450.tif|B13913_TR_2_1451.tif|B13913_TR_3_1452.tif,28.4,0.7,11.6,28.6,8.4
+B13913,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks (given as anode but tested as a cathode),,B productionline\Gen4.1\B13913,B13913_TR_1_1450.tif|B13913_TR_2_1451.tif|B13913_TR_3_1452.tif,26.5,0.8,9.8,30.2,8.3
+B13925,CATHODE,top right,x100,1,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B13925,B13925_TR_1_1485.tif|B13925_TR_2_1486.tif|B13925_TR_3_1487.tif,28.8,1.1,6.5,29.6,7.6
+B13925,CATHODE,top right,x100,2,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B13925,B13925_TR_1_1485.tif|B13925_TR_2_1486.tif|B13925_TR_3_1487.tif,30.7,1,7.3,26,6.7
+B13925,CATHODE,top right,x100,3,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B13925,B13925_TR_1_1485.tif|B13925_TR_2_1486.tif|B13925_TR_3_1487.tif,28.8,1.2,6.8,27.9,7.3
+B13926,CATHODE,top right,x100,1,Tamas Pakai,"White percipitate on sample, few microcracks",,B productionline\Gen4.1\B13926,B13926_TR_1_1488.tif|B13926_TR_2_1489.tif|B13926_TR_3_1490.tif,27.7,0.8,7.6,27.1,7.2
+B13926,CATHODE,top right,x100,2,Tamas Pakai,"White percipitate on sample, few microcracks",,B productionline\Gen4.1\B13926,B13926_TR_1_1488.tif|B13926_TR_2_1489.tif|B13926_TR_3_1490.tif,27.4,0.8,8.9,24.6,7.2
+B13926,CATHODE,top right,x100,3,Tamas Pakai,"White percipitate on sample, few microcracks",,B productionline\Gen4.1\B13926,B13926_TR_1_1488.tif|B13926_TR_2_1489.tif|B13926_TR_3_1490.tif,30.4,0.9,7.5,25.8,6.7
+B13945,CATHODE,top right,x100,1,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B13945,B13945_TR_1_1491.tif|B13945_TR_2_1492.tif|B13945_TR_3_1493.tif,30.4,1.3,10.9,27.9,7.1
+B13945,CATHODE,top right,x100,2,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B13945,B13945_TR_1_1491.tif|B13945_TR_2_1492.tif|B13945_TR_3_1493.tif,36.7,1.1,10.3,25.7,6.4
+B13945,CATHODE,top right,x100,3,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B13945,B13945_TR_1_1491.tif|B13945_TR_2_1492.tif|B13945_TR_3_1493.tif,34,1.1,12.1,27.1,6.9
+B13951,CATHODE,top right,x100,1,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B13951,B13951_TR_1_1501.tif|B13951_TR_2_1502.tif|B13951_TR_3_1503.tif,30.2,1.3,6,28.8,8.4
+B13951,CATHODE,top right,x100,2,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B13951,B13951_TR_1_1501.tif|B13951_TR_2_1502.tif|B13951_TR_3_1503.tif,27.8,1.2,7,30.4,9.2
+B13951,CATHODE,top right,x100,3,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B13951,B13951_TR_1_1501.tif|B13951_TR_2_1502.tif|B13951_TR_3_1503.tif,28.7,1.3,6.9,29,8.7
+B13953,CATHODE,top right,x100,1,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B13953,B13953_TR_1_1504.tif|B13953_TR_2_1505.tif|B13953_TR_3_1506.tif,27.5,1.2,10.8,29,7.8
+B13953,CATHODE,top right,x100,2,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B13953,B13953_TR_1_1504.tif|B13953_TR_2_1505.tif|B13953_TR_3_1506.tif,29.8,1.1,12.7,27.1,7.4
+B13953,CATHODE,top right,x100,3,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B13953,B13953_TR_1_1504.tif|B13953_TR_2_1505.tif|B13953_TR_3_1506.tif,31.9,1.1,10.9,30.5,8.2
+B13967,CATHODE,top right,x100,1,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B13967,B13967_TR_1_1507.tif|B13967_TR_2_1508.tif|B13967_TR_3_1509.tif,28.5,1.1,10.5,24.7,7.6
+B13967,CATHODE,top right,x100,2,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B13967,B13967_TR_1_1507.tif|B13967_TR_2_1508.tif|B13967_TR_3_1509.tif,26.8,1.1,11,23.6,7.7
+B13967,CATHODE,top right,x100,3,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B13967,B13967_TR_1_1507.tif|B13967_TR_2_1508.tif|B13967_TR_3_1509.tif,27.7,1.1,13.5,21.8,7.2
+B13994,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13994,B13994_TR_1_1516.tif|B13994_TR_2_1517.tif|B13994_TR_3_1518.tif,26.3,1.2,12.3,23.5,6.7
+B13994,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13994,B13994_TR_1_1516.tif|B13994_TR_2_1517.tif|B13994_TR_3_1518.tif,29,1.3,11.5,26.8,7.1
+B13994,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13994,B13994_TR_1_1516.tif|B13994_TR_2_1517.tif|B13994_TR_3_1518.tif,31.4,1.3,8.7,27,7
+B13980,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13980,B13980_TR_1_1519.tif|B13980_TR_2_1520.tif|B13980_TR_3_1521.tif,23.7,1.3,9.2,25.9,7.4
+B13980,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13980,B13980_TR_1_1519.tif|B13980_TR_2_1520.tif|B13980_TR_3_1521.tif,27.8,1.3,9.5,28.9,8.2
+B13980,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13980,B13980_TR_1_1519.tif|B13980_TR_2_1520.tif|B13980_TR_3_1521.tif,24.8,1.1,11.6,24.9,7.5
+B13977,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13977,B13977_TR_1_1522.tif|B13977_TR_2_1523.tif|B13977_TR_3_1524.tif,29.9,1.6,9,34,9
+B13977,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13977,B13977_TR_1_1522.tif|B13977_TR_2_1523.tif|B13977_TR_3_1524.tif,31.4,1.5,8.5,35,9.1
+B13977,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks/small cracks,,B productionline\Gen4.1\B13977,B13977_TR_1_1522.tif|B13977_TR_2_1523.tif|B13977_TR_3_1524.tif,31.7,1.7,8.6,31.4,8.4
+B13999,CATHODE,top right,x100,1,Oniel Rhe Lauron,Less cracking,,B productionline\Gen4.1\B13999,B13999_TR_1_1525.tif|B13999_TR_2_1526.tif|B13999_TR_3_1527.tif,27.5,1.6,9.9,26.3,7.3
+B13999,CATHODE,top right,x100,2,Oniel Rhe Lauron,Less cracking,,B productionline\Gen4.1\B13999,B13999_TR_1_1525.tif|B13999_TR_2_1526.tif|B13999_TR_3_1527.tif,30.1,1.3,11.8,22.9,6.5
+B13999,CATHODE,top right,x100,3,Oniel Rhe Lauron,Less cracking,,B productionline\Gen4.1\B13999,B13999_TR_1_1525.tif|B13999_TR_2_1526.tif|B13999_TR_3_1527.tif,30.4,1.6,9.8,29,9.8
+B13951,CATHODE,top left,x100,1,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_TL_1_1528.tif|B13951_TL_2_1530.tif|B13951_TL_3_1531.tif,58.6,0.8,0,19.5,5.7
+B13951,CATHODE,top left,x100,2,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_TL_1_1528.tif|B13951_TL_2_1530.tif|B13951_TL_3_1531.tif,30.7,1.4,0,38,10.1
+B13951,CATHODE,top left,x100,3,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_TL_1_1528.tif|B13951_TL_2_1530.tif|B13951_TL_3_1531.tif,30.9,1.3,5.6,33.4,8.6
+B13951,CATHODE,center,x100,1,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_C_1_1532.tif|B13951_C_2_1533.tif|B13951_C_3_1534.tif,31.4,1.3,6,31.6,7.5
+B13951,CATHODE,center,x100,2,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_C_1_1532.tif|B13951_C_2_1533.tif|B13951_C_3_1534.tif,30.3,1.4,6,31.5,7.9
+B13951,CATHODE,center,x100,3,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_C_1_1532.tif|B13951_C_2_1533.tif|B13951_C_3_1534.tif,27.8,1.4,4.9,33.9,8.3
+B13951,CATHODE,bottom right,x100,1,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_BR_1_1535.tif|B13951_BR_2_1536.tif|B13951_BR_3_1537.tif,35.2,1.2,5.3,30.1,7.5
+B13951,CATHODE,bottom right,x100,2,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_BR_1_1535.tif|B13951_BR_2_1536.tif|B13951_BR_3_1537.tif,30.7,1.4,5,35.7,8.8
+B13951,CATHODE,bottom right,x100,3,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_BR_1_1535.tif|B13951_BR_2_1536.tif|B13951_BR_3_1537.tif,31,1.3,4.8,34,8.7
+B13951,CATHODE,bottom left,x100,1,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_BL_1_1538.tif|B13951_BL_2_1539.tif|B13951_BL_3_1540.tif,32,1.2,6.5,33.3,8.8
+B13951,CATHODE,bottom left,x100,2,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_BL_1_1538.tif|B13951_BL_2_1539.tif|B13951_BL_3_1540.tif,28.6,1.3,5.9,34.7,9.2
+B13951,CATHODE,bottom left,x100,3,Oniel Rhe Lauron,Microcracks/small cracks,,B productionline\Gen4.1\B13951,B13951_BL_1_1538.tif|B13951_BL_2_1539.tif|B13951_BL_3_1540.tif,28.3,1.3,5.9,35.4,9.4
+B14002,CATHODE,bottom left,x100,1,Antonina Matczak,Microcracks/small cracks,,B productionline\Gen4.1\B14002,,28,1.3,9,26.6,7.8
+B14002,CATHODE,bottom left,x100,2,Antonina Matczak,Microcracks/small cracks,,B productionline\Gen4.1\B14002,,29.4,1.4,8.6,26.7,7.9
+B14002,CATHODE,bottom left,x100,3,Antonina Matczak,Microcracks/small cracks,,B productionline\Gen4.1\B14002,,28.4,1.2,11.2,24,7.4
+B14016,CATHODE,bottom left,x100,1,Antonina Matczak,Microcracks/small cracks,,B productionline\Gen4.1\B14016,,22.8,1.2,11.7,26.3,7.5
+B14016,CATHODE,bottom left,x100,2,Antonina Matczak,Microcracks/small cracks,,B productionline\Gen4.1\B14016,,24.6,1.3,10.9,28.4,7.5
+B14016,CATHODE,bottom left,x100,3,Antonina Matczak,Microcracks/small cracks,,B productionline\Gen4.1\B14016,,22.8,1.3,10.8,28.3,7.9
+B14020,CATHODE,top right,x100,1,Tamas Pakai,"Small cracks, some salt deposits present",,B productionline\Gen4.1\B14020,B14020_TR_1_1541.tif|B14020_TR_2_1542.tif|B14020_TR_3_1543.tif,26.5,1.1,9.8,23.4,5.6
+B14020,CATHODE,top right,x100,2,Tamas Pakai,"Small cracks, some salt deposits present",,B productionline\Gen4.1\B14020,B14020_TR_1_1541.tif|B14020_TR_2_1542.tif|B14020_TR_3_1543.tif,31,1.4,8.3,27.9,6.8
+B14020,CATHODE,top right,x100,3,Tamas Pakai,"Small cracks, some salt deposits present",,B productionline\Gen4.1\B14020,B14020_TR_1_1541.tif|B14020_TR_2_1542.tif|B14020_TR_3_1543.tif,25.9,1.2,10.8,24.8,5.8
+B14023,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro-cracks,,B productionline\Gen4.1\B14023,B14023_TR_1_1544.tif|B14023_TR_2_1545.tif|B14023_TR_3_1546.tif,23.9,1.4,7.9,24.7,5.3
+B14023,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro-cracks,,B productionline\Gen4.1\B14023,B14023_TR_1_1544.tif|B14023_TR_2_1545.tif|B14023_TR_3_1546.tif,28.6,1.2,9.2,26,6
+B14023,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro-cracks,,B productionline\Gen4.1\B14023,B14023_TR_1_1544.tif|B14023_TR_2_1545.tif|B14023_TR_3_1546.tif,28.2,1.2,10.3,24.9,5.8
+B14033,CATHODE,top right,x100,1,Tamas Pakai,"Microcracks, some salt deposits present",,B productionline\Gen4.1\B14033,B14033_TR_1_1547.tif|B14033_TR_2_1548.tif|B14033_TR_3_1549.tif,26.8,1.3,11.7,26.5,6.9
+B14033,CATHODE,top right,x100,2,Tamas Pakai,"Microcracks, some salt deposits present",,B productionline\Gen4.1\B14033,B14033_TR_1_1547.tif|B14033_TR_2_1548.tif|B14033_TR_3_1549.tif,29.7,1.5,9.8,30.9,7.5
+B14033,CATHODE,top right,x100,3,Tamas Pakai,"Microcracks, some salt deposits present",,B productionline\Gen4.1\B14033,B14033_TR_1_1547.tif|B14033_TR_2_1548.tif|B14033_TR_3_1549.tif,30.7,1.4,8.1,31.5,7.2
+B14037,CATHODE,top right,x100,1,Tamas Pakai,"Microcracks, few salt deposits present",,B productionline\Gen4.1\B14037,B14037_TR_1_1550.tif|B14037_TR_2_1551.tif|B14037_TR_3_1552.tif,33.6,1,16.6,20.4,5.9
+B14037,CATHODE,top right,x100,2,Tamas Pakai,"Microcracks, few salt deposits present",,B productionline\Gen4.1\B14037,B14037_TR_1_1550.tif|B14037_TR_2_1551.tif|B14037_TR_3_1552.tif,34.3,1.1,13.4,22,6.1
+B14037,CATHODE,top right,x100,3,Tamas Pakai,"Microcracks, few salt deposits present",,B productionline\Gen4.1\B14037,B14037_TR_1_1550.tif|B14037_TR_2_1551.tif|B14037_TR_3_1552.tif,34.9,1.2,13.5,24.1,6.4
+B14050,CATHODE,top right,x100,1,Tamas Pakai,"Few microcracks, few salt deposits present",,B productionline\Gen4.1\B14050,B14050_TR_1_1553.tif|B14050_TR_2_1554.tif|B14050_TR_3_1555.tif,29,1.4,11.5,24.5,6.4
+B14050,CATHODE,top right,x100,2,Tamas Pakai,"Few microcracks, few salt deposits present",,B productionline\Gen4.1\B14050,B14050_TR_1_1553.tif|B14050_TR_2_1554.tif|B14050_TR_3_1555.tif,31.5,1.4,12.7,23.8,6.2
+B14050,CATHODE,top right,x100,3,Tamas Pakai,"Few microcracks, few salt deposits present",,B productionline\Gen4.1\B14050,B14050_TR_1_1553.tif|B14050_TR_2_1554.tif|B14050_TR_3_1555.tif,28.9,1.4,14.2,22.1,6.4
+B14056,CATHODE,top right,x100,1,Tamas Pakai,Small cracks,,B productionline\Gen4.1\B14056,B14056_TR_1_1556.tif|B14056_TR_2_1557.tif|B14056_TR_3_1558.tif,29.5,1.8,11.6,25.1,6.3
+B14056,CATHODE,top right,x100,2,Tamas Pakai,Small cracks,,B productionline\Gen4.1\B14056,B14056_TR_1_1556.tif|B14056_TR_2_1557.tif|B14056_TR_3_1558.tif,26.4,1.7,12.8,22.8,6.6
+B14056,CATHODE,top right,x100,3,Tamas Pakai,Small cracks,,B productionline\Gen4.1\B14056,B14056_TR_1_1556.tif|B14056_TR_2_1557.tif|B14056_TR_3_1558.tif,27.6,1.9,11.2,25.2,6.6
+B14063,CATHODE,top right,x100,1,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B14063,B14063_TR_1_1589.tif|B14063_TR_2_1590.tif|B14063_TR_3_1591.tif,25.1,1.4,11.6,24.8,7.5
+B14063,CATHODE,top right,x100,2,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B14063,B14063_TR_1_1589.tif|B14063_TR_2_1590.tif|B14063_TR_3_1591.tif,24.7,1.5,10.4,27.6,8.1
+B14063,CATHODE,top right,x100,3,Tamas Pakai,Few small cacks,,B productionline\Gen4.1\B14063,B14063_TR_1_1589.tif|B14063_TR_2_1590.tif|B14063_TR_3_1591.tif,29,1.3,12.1,24.7,7.1
+B14071,CATHODE,top right,x100,1,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14071,B14071_TR_1_1592.tif|B14071_TR_2_1593.tif|B14071_TR_3_1594.tif,30,0.7,9.8,28.7,7.9
+B14071,CATHODE,top right,x100,2,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14071,B14071_TR_1_1592.tif|B14071_TR_2_1593.tif|B14071_TR_3_1594.tif,23.6,0.7,10.6,28.5,7.6
+B14071,CATHODE,top right,x100,3,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14071,B14071_TR_1_1592.tif|B14071_TR_2_1593.tif|B14071_TR_3_1594.tif,26.8,0.9,8.8,26.8,8.7
+B14076,CATHODE,top right,x100,1,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14076,B14076_TR_1_1595.tif|B14076_TR_2_1596.tif|B14076_TR_3_1597.tif,30.2,0.7,13.1,25.8,6.8
+B14076,CATHODE,top right,x100,2,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14076,B14076_TR_1_1595.tif|B14076_TR_2_1596.tif|B14076_TR_3_1597.tif,32.1,0.8,9.1,31.6,8
+B14076,CATHODE,top right,x100,3,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14076,B14076_TR_1_1595.tif|B14076_TR_2_1596.tif|B14076_TR_3_1597.tif,27.2,0.7,13.3,25.2,7.2
+B14081,CATHODE,top right,x100,1,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14081,B14081_TR_1_1598.tif|B14081_TR_2_1599.tif|B14081_TR_3_1600.tif,26.7,1,7.1,34.2,9.1
+B14081,CATHODE,top right,x100,2,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14081,B14081_TR_1_1598.tif|B14081_TR_2_1599.tif|B14081_TR_3_1600.tif,26.9,0.9,8.1,33.2,8.8
+B14081,CATHODE,top right,x100,3,Antonina Matczak,Small cracks,,B productionline\Gen4.1\B14081,B14081_TR_1_1598.tif|B14081_TR_2_1599.tif|B14081_TR_3_1600.tif,27.1,0.9,9.8,31.6,8.3
+B14087,CATHODE,top right,x100,1,Tamas Pakai,Small cracks,,B productionline\Gen4.1\B14087,B14087_TR_1_1601.tif|B14087_TR_2_1602.tif|B14087_TR_3_1603.tif,32.5,0.9,11.5,28.8,6.9
+B14087,CATHODE,top right,x100,2,Tamas Pakai,Small cracks,,B productionline\Gen4.1\B14087,B14087_TR_1_1601.tif|B14087_TR_2_1602.tif|B14087_TR_3_1603.tif,30.1,0.8,13.5,23.5,6.6
+B14087,CATHODE,top right,x100,3,Tamas Pakai,Small cracks,,B productionline\Gen4.1\B14087,B14087_TR_1_1601.tif|B14087_TR_2_1602.tif|B14087_TR_3_1603.tif,30.4,0.8,13,24.7,6.7
+B14088,CATHODE,top right,x100,1,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B14088,B14088_TR_1_1604.tif|B14088_TR_2_1605.tif|B14088_TR_3_1606.tif,29.3,0.9,8.3,28.9,7.2
+B14088,CATHODE,top right,x100,2,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B14088,B14088_TR_1_1604.tif|B14088_TR_2_1605.tif|B14088_TR_3_1606.tif,31.5,0.9,8.1,27.4,6.5
+B14088,CATHODE,top right,x100,3,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B14088,B14088_TR_1_1604.tif|B14088_TR_2_1605.tif|B14088_TR_3_1606.tif,27.6,0.8,8.9,25.8,6.1
+B14098,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14098,B14098_TR_1_1607.tif|B14098_TR_2_1608.tif|B14098_TR_3_1609.tif,28.9,1.3,7,36,8
+B14098,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14098,B14098_TR_1_1607.tif|B14098_TR_2_1608.tif|B14098_TR_3_1609.tif,32.3,1.2,7.7,33.3,7.5
+B14098,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14098,B14098_TR_1_1607.tif|B14098_TR_2_1608.tif|B14098_TR_3_1609.tif,30.8,1.2,8,34,7.7
+B14100,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14100,B14100_TR_1_1610.tif|B14100_TR_2_1611.tif|B14100_TR_3_1612.tif,26.7,1.3,8.5,34.5,7.8
+B14100,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14100,B14100_TR_1_1610.tif|B14100_TR_2_1611.tif|B14100_TR_3_1612.tif,25.7,1.3,5.9,35.9,8.8
+B14100,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14100,B14100_TR_1_1610.tif|B14100_TR_2_1611.tif|B14100_TR_3_1612.tif,26.3,1.2,7.5,33.4,8
+B14116,CATHODE,top right,x100,1,Emil Andersen,Cracked,,B productionline\Gen4.1\B14116,B14116_TR_1_1621.tif|B14116_TR_2_1622.tif|B14116_TR_3_1623.tif,33.3,1.4,7,28.7,7.8
+B14116,CATHODE,top right,x100,2,Emil Andersen,Cracked,,B productionline\Gen4.1\B14116,B14116_TR_1_1621.tif|B14116_TR_2_1622.tif|B14116_TR_3_1623.tif,32.5,1.4,7.2,29,7.8
+B14116,CATHODE,top right,x100,3,Emil Andersen,Cracked,,B productionline\Gen4.1\B14116,B14116_TR_1_1621.tif|B14116_TR_2_1622.tif|B14116_TR_3_1623.tif,29.6,1.5,7.9,29.8,7.9
+B14129,CATHODE,top right,x100,1,Julia Marchlewska,Craked,,B productionline\Gen4.1\B14129,B14129_TR_1_1635.tif|B14129_TR_2_1636.tif|B14129_TR_3_1637.tif,30,1.2,7.6,28.9,7.5
+B14129,CATHODE,top right,x100,2,Julia Marchlewska,Craked,,B productionline\Gen4.1\B14129,B14129_TR_1_1635.tif|B14129_TR_2_1636.tif|B14129_TR_3_1637.tif,26.9,1.1,7,31.3,7.9
+B14129,CATHODE,top right,x100,3,Julia Marchlewska,Craked,,B productionline\Gen4.1\B14129,B14129_TR_1_1635.tif|B14129_TR_2_1636.tif|B14129_TR_3_1637.tif,22.4,1.4,5.1,35.2,8.9
+B14129,CATHODE,top left,x100,1,Julia Marchlewska,Cracked,,B productionline\Gen4.1\B14129,B14129_TL_1_1638.tif|B14129_TL_2_1639.tif|B14129_TL_3_1640.tif,27.6,1.2,7.2,31.7,8.3
+B14129,CATHODE,top left,x100,2,Julia Marchlewska,Cracked,,B productionline\Gen4.1\B14129,B14129_TL_1_1638.tif|B14129_TL_2_1639.tif|B14129_TL_3_1640.tif,33.3,1,8.9,29.2,8
+B14129,CATHODE,top left,x100,3,Julia Marchlewska,Cracked,,B productionline\Gen4.1\B14129,B14129_TL_1_1638.tif|B14129_TL_2_1639.tif|B14129_TL_3_1640.tif,31.4,1.2,6.5,28.9,7.9
+B14130,CATHODE,top right,x100,1,Julia Marchlewska,Cracked,,B productionline\Gen4.1\B14130,B14130_TR_1_1644.tif|B14130_TR_2_1646.tif|B14130_TR_3_1647.tif,26.7,1.1,8.9,31.5,8.3
+B14130,CATHODE,top right,x100,2,Julia Marchlewska,Cracked,,B productionline\Gen4.1\B14130,B14130_TR_1_1644.tif|B14130_TR_2_1646.tif|B14130_TR_3_1647.tif,26.9,1.2,7.8,33.6,8.8
+B14130,CATHODE,top right,x100,3,Julia Marchlewska,Cracked,,B productionline\Gen4.1\B14130,B14130_TR_1_1644.tif|B14130_TR_2_1646.tif|B14130_TR_3_1647.tif,25.2,1.4,6.2,33,8.4
+B14140,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14140,B14140_TR_1_1648.tif|B14140_TR_2_1649.tif|B14140_TR_3_1650.tif,29,1.1,8.8,30.7,8.2
+B14140,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14140,B14140_TR_1_1648.tif|B14140_TR_2_1649.tif|B14140_TR_3_1650.tif,27.1,1.2,6.3,34.4,8.8
+B14140,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14140,B14140_TR_1_1648.tif|B14140_TR_2_1649.tif|B14140_TR_3_1650.tif,29.8,1.2,8.7,32.8,8.4
+B14141,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14141,B14141_TR_1_1651.tif|B14141_TR_2_1652.tif|B14141_TR_3_1653.tif,25.4,1.2,8.8,34.3,8.8
+B14141,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14141,B14141_TR_1_1651.tif|B14141_TR_2_1652.tif|B14141_TR_3_1653.tif,33.1,1,6.5,29.1,7.7
+B14141,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14141,B14141_TR_1_1651.tif|B14141_TR_2_1652.tif|B14141_TR_3_1653.tif,30.3,1.1,9.2,30.9,8.1
+B14168,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14168,B14168_TR_1_1654.tif|B14168_TR_2_1655.tif|B14168_TR_3_1656.tif,30.9,1.7,7.5,30,7.8
+B14168,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14168,B14168_TR_1_1654.tif|B14168_TR_2_1655.tif|B14168_TR_3_1656.tif,30.6,1.8,6.4,31.3,8.4
+B14168,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14168,B14168_TR_1_1654.tif|B14168_TR_2_1655.tif|B14168_TR_3_1656.tif,32.7,1.7,6.7,29.9,7.7
+B14151,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14151,B14151_TR_1_1657.tif|B14151_TR_2_1658.tif|B14151_TR_3_1659.tif,33.6,0.9,7.8,32.2,8.6
+B14151,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14151,B14151_TR_1_1657.tif|B14151_TR_2_1658.tif|B14151_TR_3_1659.tif,33.8,1,5.9,32.4,8.8
+B14151,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Cracked,,B productionline\Gen4.1\B14151,B14151_TR_1_1657.tif|B14151_TR_2_1658.tif|B14151_TR_3_1659.tif,35.6,1,6.8,31.8,8.2
+B14159,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Mostly microcracks/very little cracks,,B productionline\Gen4.1\B14159,B14159_TR_1_1660.tif|B14159_TR_2_1661.tif|B14159_TR_3_1662.tif,31,1.8,7,31.5,8.6
+B14159,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Mostly microcracks/very little cracks,,B productionline\Gen4.1\B14159,B14159_TR_1_1660.tif|B14159_TR_2_1661.tif|B14159_TR_3_1662.tif,27.9,1.7,7.6,34.1,9.2
+B14159,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Mostly microcracks/very little cracks,,B productionline\Gen4.1\B14159,B14159_TR_1_1660.tif|B14159_TR_2_1661.tif|B14159_TR_3_1662.tif,,3.3,,52.3,14.2
+B14174,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,"Small cracks/microcracks (kind of on the edge, but a little worse than B14159)",,B productionline\Gen4.1\B14174,B14174_TR_1_1663.tif|B14174_TR_2_1664.tif|B14174_TR_3_1665.tif,29.5,2.5,,34.7,8.9
+B14174,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,"Small cracks/microcracks (kind of on the edge, but a little worse than B14159)",,B productionline\Gen4.1\B14174,B14174_TR_1_1663.tif|B14174_TR_2_1664.tif|B14174_TR_3_1665.tif,,4,,49.9,13.4
+B14174,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,"Small cracks/microcracks (kind of on the edge, but a little worse than B14159)",,B productionline\Gen4.1\B14174,B14174_TR_1_1663.tif|B14174_TR_2_1664.tif|B14174_TR_3_1665.tif,29.1,2.4,5.4,30.9,7.7
+B14172,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14172,B14172_TR_1_1666.tif|B14172_TR_2_1667.tif|B14172_TR_3_1668.tif,28.8,1.8,8.9,30.6,7.5
+B14172,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14172,B14172_TR_1_1666.tif|B14172_TR_2_1667.tif|B14172_TR_3_1668.tif,32.4,1.7,8.5,29.2,7.2
+B14172,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14172,B14172_TR_1_1666.tif|B14172_TR_2_1667.tif|B14172_TR_3_1668.tif,26.3,1.9,9,30.8,7.7
+B14175,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,B14175_TR_1_1669.tif|B14175_TR_2_1670.tif|B14175_TR_3_1671.tif,30.7,1.8,9.8,27.7,6.9
+B14175,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,B14175_TR_1_1669.tif|B14175_TR_2_1670.tif|B14175_TR_3_1671.tif,30,1.8,8.1,28.8,7.1
+B14175,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,B14175_TR_1_1669.tif|B14175_TR_2_1670.tif|B14175_TR_3_1671.tif,31.9,1.9,9,29.1,7
+B14184,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14184,B14184_TR_1_1672.tif|B14184_TR_2_1673.tif|B14184_TR_3_1674.tif,25.6,1.1,8.8,30.5,8.3
+B14184,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14184,B14184_TR_1_1672.tif|B14184_TR_2_1673.tif|B14184_TR_3_1674.tif,30.8,1,8.7,28.1,7.9
+B14184,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14184,B14184_TR_1_1672.tif|B14184_TR_2_1673.tif|B14184_TR_3_1674.tif,29,1,9.4,26.6,7.4
+B14175,CATHODE,bottom left,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,,24.8,2.2,5.9,31.8,8
+B14175,CATHODE,bottom left,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,,25.8,2.4,6.7,32.9,8.3
+B14175,CATHODE,bottom left,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,,26.6,2.2,6,31.7,8.5
+B14175,CATHODE,top right (2),x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,B14175_TR_1_1669.tif|B14175_TR_2_1670.tif|B14175_TR_3_1671.tif,30.8,1.9,7.9,31.4,7.3
+B14175,CATHODE,top right (2),x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,B14175_TR_1_1669.tif|B14175_TR_2_1670.tif|B14175_TR_3_1671.tif,27.9,2.3,6.3,33.6,8.1
+B14175,CATHODE,top right (2),x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14175,B14175_TR_1_1669.tif|B14175_TR_2_1670.tif|B14175_TR_3_1671.tif,28,2.2,5.6,32.9,8.1
+B14192,CATHODE,top right,x100,1,Tamas Pakai,small cracks,,B productionline\Gen4.1\B14192,B14192_TR_1_1690.tif|B14192_TR_2_1691.tif|B14192_TR_3_1692.tif,28.1,1.1,10.8,27.3,7.3
+B14192,CATHODE,top right,x100,2,Tamas Pakai,small cracks,,B productionline\Gen4.1\B14192,B14192_TR_1_1690.tif|B14192_TR_2_1691.tif|B14192_TR_3_1692.tif,27.2,1.2,9.6,30.7,8.2
+B14192,CATHODE,top right,x100,3,Tamas Pakai,small cracks,,B productionline\Gen4.1\B14192,B14192_TR_1_1690.tif|B14192_TR_2_1691.tif|B14192_TR_3_1692.tif,27.9,1.2,9.9,30.2,7.7
+B14095,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14095,B14095_TR_1_1693.tif|B14095_TR_2_1694.tif|B14095_TR_3_1695.tif,26.2,1.1,5.7,37.2,9.2
+B14095,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14095,B14095_TR_1_1693.tif|B14095_TR_2_1694.tif|B14095_TR_3_1695.tif,29.6,1.2,6.2,37.1,8.9
+B14095,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14095,B14095_TR_1_1693.tif|B14095_TR_2_1694.tif|B14095_TR_3_1695.tif,30.3,1.5,,39.8,9.6
+B14200,CATHODE,top right,x100,1,Antonina Matczak,Less cracked,,B productionline\Gen4.1\B14200,B14200_TR_1_1717.tif|B14200_TR_2_1718.tif|B14200_TR_3_1719.tif,26.3,1.5,9,30.7,7.8
+B14200,CATHODE,top right,x100,2,Antonina Matczak,Less cracked,,B productionline\Gen4.1\B14200,B14200_TR_1_1717.tif|B14200_TR_2_1718.tif|B14200_TR_3_1719.tif,31.2,1.3,8.9,26.6,7
+B14200,CATHODE,top right,x100,3,Antonina Matczak,Less cracked,,B productionline\Gen4.1\B14200,B14200_TR_1_1717.tif|B14200_TR_2_1718.tif|B14200_TR_3_1719.tif,24.9,1.4,9.7,31.2,7.9
+B14202,CATHODE,top right,x100,1,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14202,B14202_TR_1_1720.tif|B14202_TR_2_1721.tif|B14202_TR_3_1722.tif,25.7,1.5,7.7,31.7,7.8
+B14202,CATHODE,top right,x100,2,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14202,B14202_TR_1_1720.tif|B14202_TR_2_1721.tif|B14202_TR_3_1722.tif,29.6,1.5,6.1,29.2,7
+B14202,CATHODE,top right,x100,3,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14202,B14202_TR_1_1720.tif|B14202_TR_2_1721.tif|B14202_TR_3_1722.tif,24.3,1.7,6.8,32.2,7.9
+B14206,CATHODE,top right,x100,1,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14206,B14206_TR_1_1723.tif|B14206_TR_2_1724.tif|B14206_TR_3_1725.tif,28.3,1.3,10.4,24.6,6.8
+B14206,CATHODE,top right,x100,2,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14206,B14206_TR_1_1723.tif|B14206_TR_2_1724.tif|B14206_TR_3_1725.tif,24.9,1.3,12.5,25.6,7.3
+B14206,CATHODE,top right,x100,3,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14206,B14206_TR_1_1723.tif|B14206_TR_2_1724.tif|B14206_TR_3_1725.tif,23.8,1.3,11.2,27.3,7.5
+B14137,CATHODE,top right,x100,1,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14137,B14137_TR_1_1726.tif|B14137_TR_2_1727.tif|B14137_TR_3_1728.tif,30.2,1.4,,36.6,9.7
+B14137,CATHODE,top right,x100,2,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14137,B14137_TR_1_1726.tif|B14137_TR_2_1727.tif|B14137_TR_3_1728.tif,32.5,1.2,7.9,30,7.5
+B14137,CATHODE,top right,x100,3,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14137,B14137_TR_1_1726.tif|B14137_TR_2_1727.tif|B14137_TR_3_1728.tif,28.5,1.3,7.6,32,8.1
+B14144,CATHODE,top right,x100,1,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14144,B14144_TR_1_1729.tif|B14144_TR_2_1730.tif|B14144_TR_3_1731.tif,30.8,1.3,9.5,31,7.9
+B14144,CATHODE,top right,x100,2,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14144,B14144_TR_1_1729.tif|B14144_TR_2_1730.tif|B14144_TR_3_1731.tif,29.8,1.3,7.6,29.4,7.7
+B14144,CATHODE,top right,x100,3,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14144,B14144_TR_1_1729.tif|B14144_TR_2_1730.tif|B14144_TR_3_1731.tif,28,1.4,6.8,31.9,8.7
+B14154,CATHODE,top right,x100,1,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14154,B14154_TR_1_1732.tif|B14154_TR_2_1733.tif|B14154_TR_3_1734.tif,35.9,1.1,7.4,32.7,8.2
+B14154,CATHODE,top right,x100,2,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14154,B14154_TR_1_1732.tif|B14154_TR_2_1733.tif|B14154_TR_3_1734.tif,30.5,1.2,7.3,35.7,9.3
+B14154,CATHODE,top right,x100,3,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14154,B14154_TR_1_1732.tif|B14154_TR_2_1733.tif|B14154_TR_3_1734.tif,33,1.2,7.8,33.8,8.4
+B14165,CATHODE,top right,x100,1,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14165,B14165_TR_1_1735.tif|B14165_TR_2_1736.tif|B14165_TR_3_1737.tif,28.1,2.6,8.4,27.5,6.8
+B14165,CATHODE,top right,x100,2,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14165,B14165_TR_1_1735.tif|B14165_TR_2_1736.tif|B14165_TR_3_1737.tif,31.8,2.4,7.7,27.1,6.4
+B14165,CATHODE,top right,x100,3,Oniel Rhe Lauron,Cracked,,B productionline\Gen4.1\B14165,B14165_TR_1_1735.tif|B14165_TR_2_1736.tif|B14165_TR_3_1737.tif,29.8,2.5,7.6,30.1,6.9
+B14218,CATHODE,top right,x100,1,Oniel Rhe Lauron,Microcracked,,B productionline\Gen4.1\B14218,B14218_TR_1_1738.tif|B14218_TR_2_1739.tif|B14218_TR_3_1740.tif,33,1.2,7.7,30.5,8.2
+B14218,CATHODE,top right,x100,2,Oniel Rhe Lauron,Microcracked,,B productionline\Gen4.1\B14218,B14218_TR_1_1738.tif|B14218_TR_2_1739.tif|B14218_TR_3_1740.tif,30.1,1.3,8.6,31.5,8.5
+B14218,CATHODE,top right,x100,3,Oniel Rhe Lauron,Microcracked,,B productionline\Gen4.1\B14218,B14218_TR_1_1738.tif|B14218_TR_2_1739.tif|B14218_TR_3_1740.tif,32.4,1.2,8.7,30.6,7.8
+B14209,CATHODE,top right,x100,1,Oniel Rhe Lauron,Mostly microcracks/very little cracks,,B productionline\Gen4.1\B14209,B14209_TR_1_1741.tif|B14209_TR_2_1742.tif|B14209_TR_3_1743.tif,31.9,1.3,7,31.4,7.8
+B14209,CATHODE,top right,x100,2,Oniel Rhe Lauron,Mostly microcracks/very little cracks,,B productionline\Gen4.1\B14209,B14209_TR_1_1741.tif|B14209_TR_2_1742.tif|B14209_TR_3_1743.tif,35.3,1.1,8.7,25.4,6.6
+B14209,CATHODE,top right,x100,3,Oniel Rhe Lauron,Mostly microcracks/very little cracks,,B productionline\Gen4.1\B14209,B14209_TR_1_1741.tif|B14209_TR_2_1742.tif|B14209_TR_3_1743.tif,28.9,1.5,6.1,31.4,7.9
+B14229,CATHODE,top right,x100,1,Daniel Frank,Very few microcracks,,B productionline\Gen4.1\B14229,B14229_TR_1_1744.tif|B14229_TR_2_1745.tif|B14229_TR_3_1746.tif,28.7,1.2,6.9,32.3,8.9
+B14229,CATHODE,top right,x100,2,Daniel Frank,Very few microcracks,,B productionline\Gen4.1\B14229,B14229_TR_1_1744.tif|B14229_TR_2_1745.tif|B14229_TR_3_1746.tif,27.6,1.3,6.4,34,9.3
+B14229,CATHODE,top right,x100,3,Daniel Frank,Very few microcracks,,B productionline\Gen4.1\B14229,B14229_TR_1_1744.tif|B14229_TR_2_1745.tif|B14229_TR_3_1746.tif,31.5,1.2,5.9,34,9
+B14225,CATHODE,top right,x100,1,Daniel Frank,Few microcracks,,B productionline\Gen4.1\B14225,B14225_TR_2_1748.tif|B14225_TR_3_1749.tif,23.8,1.5,5.7,31.8,8.7
+B14225,CATHODE,top right,x100,2,Daniel Frank,Few microcracks,,B productionline\Gen4.1\B14225,B14225_TR_2_1748.tif|B14225_TR_3_1749.tif,26.6,1.4,5.5,30.3,8.3
+B14225,CATHODE,top right,x100,3,Daniel Frank,Few microcracks,,B productionline\Gen4.1\B14225,B14225_TR_2_1748.tif|B14225_TR_3_1749.tif,26.6,1.3,10.4,25.5,7.6
+B14234,CATHODE,top right,x100,1,Daniel Frank,Cracked,,B productionline\Gen4.1\B14234,B14234_TR_1_1750.tif|B14234_TR_2_1751.tif|B14234_TR_3_1752.tif,23.3,1.7,6.5,34.2,9.1
+B14234,CATHODE,top right,x100,2,Daniel Frank,Cracked,,B productionline\Gen4.1\B14234,B14234_TR_1_1750.tif|B14234_TR_2_1751.tif|B14234_TR_3_1752.tif,24.2,1.6,7.5,33.1,8.1
+B14234,CATHODE,top right,x100,3,Daniel Frank,Cracked,,B productionline\Gen4.1\B14234,B14234_TR_1_1750.tif|B14234_TR_2_1751.tif|B14234_TR_3_1752.tif,28.7,1.5,7.6,32.7,8.1
+B14243,CATHODE,top right,x100,1,Antonina Matczak,Few microcracks,,B productionline\Gen4.1\B14243,B14243_TR_1_1753.tif|B14243_TR_2_1754.tif|B14243_TR_3_1755.tif,28.2,1.3,11.1,30,7.7
+B14243,CATHODE,top right,x100,2,Antonina Matczak,Few microcracks,,B productionline\Gen4.1\B14243,B14243_TR_1_1753.tif|B14243_TR_2_1754.tif|B14243_TR_3_1755.tif,29.8,1.3,10.6,27.4,7.4
+B14243,CATHODE,top right,x100,3,Antonina Matczak,Few microcracks,,B productionline\Gen4.1\B14243,B14243_TR_1_1753.tif|B14243_TR_2_1754.tif|B14243_TR_3_1755.tif,33.1,1.1,11.4,26.8,7.3
+B14252,CATHODE,top right,x100,1,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14252,B14252_TR_1_1756.tif|B14252_TR_2_1757.tif|B14252_TR_3_1758.tif,26.6,1.4,13.8,27.9,7.8
+B14252,CATHODE,top right,x100,2,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14252,B14252_TR_1_1756.tif|B14252_TR_2_1757.tif|B14252_TR_3_1758.tif,28.2,1.4,7.6,28,7.2
+B14252,CATHODE,top right,x100,3,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14252,B14252_TR_1_1756.tif|B14252_TR_2_1757.tif|B14252_TR_3_1758.tif,23.3,1.6,8.5,30.1,8.1
+B14557,CATHODE,top right,x100,1,Antonina Matczak,Microcracked,,,,26.4,1.7,5.1,33.7,8.6
+B14557,CATHODE,top right,x100,2,Antonina Matczak,Microcracked,,,,30.3,1.6,6.9,30.5,7.4
+B14557,CATHODE,top right,x100,3,Antonina Matczak,Microcracked,,,,28.7,1.7,6.8,32.1,7.5
+B14266,CATHODE,top right,x100,1,Oniel Rhe Lauron,Few microcracks,,B productionline\Gen4.1\B14266,B14266_TR_1_1762.tif|B14266_TR_2_1763.tif|B14266_TR_3_1764.tif,27.8,1.6,10.6,32.3,8.3
+B14266,CATHODE,top right,x100,2,Oniel Rhe Lauron,Few microcracks,,B productionline\Gen4.1\B14266,B14266_TR_1_1762.tif|B14266_TR_2_1763.tif|B14266_TR_3_1764.tif,31.1,1.4,8,30.8,7.5
+B14266,CATHODE,top right,x100,3,Oniel Rhe Lauron,Few microcracks,,B productionline\Gen4.1\B14266,B14266_TR_1_1762.tif|B14266_TR_2_1763.tif|B14266_TR_3_1764.tif,34.8,1.2,12.6,28,6.7
+B14268,CATHODE,top right,x100,1,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B14268,B14268_TR_1_1765.tif|B14268_TR_2_1766.tif|B14268_TR_3_1767.tif,31.2,1.4,10.9,30.6,7.2
+B14268,CATHODE,top right,x100,2,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B14268,B14268_TR_1_1765.tif|B14268_TR_2_1766.tif|B14268_TR_3_1767.tif,33,1.4,10.1,28.5,6.4
+B14268,CATHODE,top right,x100,3,Oniel Rhe Lauron,Fine,,B productionline\Gen4.1\B14268,B14268_TR_1_1765.tif|B14268_TR_2_1766.tif|B14268_TR_3_1767.tif,32.3,1.5,9.5,29.2,6.6
+B14275,CATHODE,top right,x100,1,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14275,B14275_TR_1_1768.tif|B14275_TR_2_1769.tif|B14275_TR_3_1770.tif,28.6,1.6,10.7,29.3,7
+B14275,CATHODE,top right,x100,2,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14275,B14275_TR_1_1768.tif|B14275_TR_2_1769.tif|B14275_TR_3_1770.tif,31.8,1.6,9.4,27,6.6
+B14275,CATHODE,top right,x100,3,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14275,B14275_TR_1_1768.tif|B14275_TR_2_1769.tif|B14275_TR_3_1770.tif,28.6,1.5,10.8,27.4,6.9
+B14280,CATHODE,top right,x100,1,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14280,B14280_TR_1_1771.tif|B14280_TR_2_1772.tif|B14280_TR_3_1773.tif,26.2,1.7,7.9,30.1,7.4
+B14280,CATHODE,top right,x100,2,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14280,B14280_TR_1_1771.tif|B14280_TR_2_1772.tif|B14280_TR_3_1773.tif,30.6,1.5,8.7,31.4,7.6
+B14280,CATHODE,top right,x100,3,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14280,B14280_TR_1_1771.tif|B14280_TR_2_1772.tif|B14280_TR_3_1773.tif,30.8,1.6,9.2,31.6,7.4
+B14293,CATHODE,top right,x100,1,Tamas Pakai,Small cracks visible at higher magnifications,,B productionline\Gen4.1\B14293,B14293_TR_1_1774.tif|B14293_TR_2_1775.tif|B14293_TR_3_1776.tif,31.5,1.3,6.2,30.2,7.8
+B14293,CATHODE,top right,x100,2,Tamas Pakai,Small cracks visible at higher magnifications,,B productionline\Gen4.1\B14293,B14293_TR_1_1774.tif|B14293_TR_2_1775.tif|B14293_TR_3_1776.tif,31.3,1.2,8.3,29,7.5
+B14293,CATHODE,top right,x100,3,Tamas Pakai,Small cracks visible at higher magnifications,,B productionline\Gen4.1\B14293,B14293_TR_1_1774.tif|B14293_TR_2_1775.tif|B14293_TR_3_1776.tif,32.7,1.1,7.3,29.3,7.3
+B14301,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14301,B14301_TR_1_1783.tif|B14301_TR_2_1784.tif|B14301_TR_3_1785.tif,26.4,1.3,12.8,29.3,8
+B14301,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14301,B14301_TR_1_1783.tif|B14301_TR_2_1784.tif|B14301_TR_3_1785.tif,31.1,1.1,12.6,26.1,7.3
+B14301,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14301,B14301_TR_1_1783.tif|B14301_TR_2_1784.tif|B14301_TR_3_1785.tif,29,1.1,13.2,23.3,6.7
+B14312,CATHODE,top right,x100,1,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B14312,B14312_TR_1_1786.tif|B14312_TR_2_1787.tif|B14312_TR_3_1788.tif,22.7,1,9.5,26.8,8.1
+B14312,CATHODE,top right,x100,2,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B14312,B14312_TR_1_1786.tif|B14312_TR_2_1787.tif|B14312_TR_3_1788.tif,24.1,0.8,10.4,24.5,7.5
+B14312,CATHODE,top right,x100,3,Tamas Pakai,Few microcracks,,B productionline\Gen4.1\B14312,B14312_TR_1_1786.tif|B14312_TR_2_1787.tif|B14312_TR_3_1788.tif,23.7,0.9,10.6,26.7,8.1
+B14318,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14318,B14318_TR_1_1789.tif|B14318_TR_2_1790.tif|B14318_TR_3_1791.tif,26.3,0.7,15.5,20.1,7.5
+B14318,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14318,B14318_TR_1_1789.tif|B14318_TR_2_1790.tif|B14318_TR_3_1791.tif,22,1.3,14.7,22.1,8.2
+B14318,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14318,B14318_TR_1_1789.tif|B14318_TR_2_1790.tif|B14318_TR_3_1791.tif,22.7,0.8,13.6,24,7.9
+B14092,CATHODE,top right,x100,1,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14092,B14092_TR_1_1792.tif|B14092_TR_2_1793.tif|B14092_TR_3_1794.tif,28.9,1.1,7.4,30.9,8.1
+B14092,CATHODE,top right,x100,2,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14092,B14092_TR_1_1792.tif|B14092_TR_2_1793.tif|B14092_TR_3_1794.tif,30,1,7.5,32.5,8.5
+B14092,CATHODE,top right,x100,3,Antonina Matczak,Microcracked,,B productionline\Gen4.1\B14092,B14092_TR_1_1792.tif|B14092_TR_2_1793.tif|B14092_TR_3_1794.tif,28.2,1.1,6.5,34.3,9.1
+B14325,CATHODE,top right,x100,1,Emil Andersen,Microcracks and small clumps of carbon,,B productionline\Gen4.1\B14325,B14325_TR_1_1795.tif|B14325_TR_2_1796.tif|B14325_TR_3_1797.tif,27.3,0.9,11.2,25.9,7.4
+B14325,CATHODE,top right,x100,2,Emil Andersen,Microcracks and small clumps of carbon,,B productionline\Gen4.1\B14325,B14325_TR_1_1795.tif|B14325_TR_2_1796.tif|B14325_TR_3_1797.tif,26,0.9,11.9,24.9,7.6
+B14325,CATHODE,top right,x100,3,Emil Andersen,Microcracks and small clumps of carbon,,B productionline\Gen4.1\B14325,B14325_TR_1_1795.tif|B14325_TR_2_1796.tif|B14325_TR_3_1797.tif,26.1,0.9,13.8,24.9,7.2
+B14327,CATHODE,top right,x100,1,Emil Andersen,Few microcracks,,B productionline\Gen4.1\B14327,B14327_TR_1_1798.tif|B14327_TR_2_1799.tif|B14327_TR_3_1800.tif,29.9,1,6.7,29.9,7.6
+B14327,CATHODE,top right,x100,2,Emil Andersen,Few microcracks,,B productionline\Gen4.1\B14327,B14327_TR_1_1798.tif|B14327_TR_2_1799.tif|B14327_TR_3_1800.tif,31.2,1.1,,33,8.6
+B14327,CATHODE,top right,x100,3,Emil Andersen,Few microcracks,,B productionline\Gen4.1\B14327,B14327_TR_1_1798.tif|B14327_TR_2_1799.tif|B14327_TR_3_1800.tif,30.4,1,6.4,30.2,7.7
+B14333,CATHODE,top right,x100,1,Emil Andersen,Few microcracks,,B productionline\Gen4.1\B14333,B14333_TR_1_1801.tif|B14333_TR_2_1802.tif|B14333_TR_3_1803.tif,30.9,0.9,8.8,26.9,7.3
+B14333,CATHODE,top right,x100,2,Emil Andersen,Few microcracks,,B productionline\Gen4.1\B14333,B14333_TR_1_1801.tif|B14333_TR_2_1802.tif|B14333_TR_3_1803.tif,29.5,0.8,9.8,27.3,7.3
+B14333,CATHODE,top right,x100,3,Emil Andersen,Few microcracks,,B productionline\Gen4.1\B14333,B14333_TR_1_1801.tif|B14333_TR_2_1802.tif|B14333_TR_3_1803.tif,32,1,6.6,29.1,7.4
+B14342,CATHODE,top right,x100,1,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B14342,B14342_TR_1_1804.tif|B14342_TR_2_1805.tif|B14342_TR_3_1806.tif,31,1.2,6.9,31.2,8
+B14342,CATHODE,top right,x100,2,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B14342,B14342_TR_1_1804.tif|B14342_TR_2_1805.tif|B14342_TR_3_1806.tif,23.2,1.3,8.2,33.5,8.8
+B14342,CATHODE,top right,x100,3,Emil Andersen,Few Microcracks,,B productionline\Gen4.1\B14342,B14342_TR_1_1804.tif|B14342_TR_2_1805.tif|B14342_TR_3_1806.tif,30.6,1.2,7.7,31.8,7.9
+B14347,CATHODE,top right,x100,1,Emil Andersen,Microcracks,,B productionline\Gen4.1\B14347,B14347_TR_1_1807.tif|B14347_TR_2_1808.tif|B14347_TR_3_1809.tif,26.8,1.3,6.3,33.9,8.4
+B14347,CATHODE,top right,x100,2,Emil Andersen,Microcracks,,B productionline\Gen4.1\B14347,B14347_TR_1_1807.tif|B14347_TR_2_1808.tif|B14347_TR_3_1809.tif,28,1.2,5.9,32.2,8
+B14347,CATHODE,top right,x100,3,Emil Andersen,Microcracks,,B productionline\Gen4.1\B14347,B14347_TR_1_1807.tif|B14347_TR_2_1808.tif|B14347_TR_3_1809.tif,30,1.2,6.6,33.7,8.2
+B14358,CATHODE,top right,x100,1,Emil Andersen,Cracked,,B productionline\Gen4.1\B14358,B14358_TR_1_1810.tif|B14358_TR_2_1811.tif|B14358_TR_3_1812.tif,27.4,1.2,7.4,34.9,8.7
+B14358,CATHODE,top right,x100,2,Emil Andersen,Cracked,,B productionline\Gen4.1\B14358,B14358_TR_1_1810.tif|B14358_TR_2_1811.tif|B14358_TR_3_1812.tif,31.6,1.1,9.2,31.9,8
+B14358,CATHODE,top right,x100,3,Emil Andersen,Cracked,,B productionline\Gen4.1\B14358,B14358_TR_1_1810.tif|B14358_TR_2_1811.tif|B14358_TR_3_1812.tif,34.8,1.1,8,30.1,7.6
+B14361,CATHODE,top right,x100,1,Emil Andersen,Less cracked,,B productionline\Gen4.1\B14361,B14361_TR_1_1813.tif|B14361_TR_2_1814.tif|B14361_TR_3_1815.tif,31,1,11.7,30.1,8
+B14361,CATHODE,top right,x100,2,Emil Andersen,Less cracked,,B productionline\Gen4.1\B14361,B14361_TR_1_1813.tif|B14361_TR_2_1814.tif|B14361_TR_3_1815.tif,35.9,0.9,10.6,27.5,7.3
+B14361,CATHODE,top right,x100,3,Emil Andersen,Less cracked,,B productionline\Gen4.1\B14361,B14361_TR_1_1813.tif|B14361_TR_2_1814.tif|B14361_TR_3_1815.tif,35.2,1,9.4,29.9,7.8
+B14355,CATHODE,top right,x100,1,Emil Andersen,Microcracks,,B productionline\Gen4.1\B14355,B14355_TR_1_1816.tif|B14355_TR_2_1817.tif|B14355_TR_3_1818.tif,34,1,6.8,32.3,7.8
+B14355,CATHODE,top right,x100,2,Emil Andersen,Microcracks,,B productionline\Gen4.1\B14355,B14355_TR_1_1816.tif|B14355_TR_2_1817.tif|B14355_TR_3_1818.tif,32.9,1.4,,38.3,9.6
+B14355,CATHODE,top right,x100,3,Emil Andersen,Microcracks,,B productionline\Gen4.1\B14355,B14355_TR_1_1816.tif|B14355_TR_2_1817.tif|B14355_TR_3_1818.tif,34.7,1.1,4.8,32.7,8.3
+B14352,CATHODE,top right,x100,1,Emil Andersen,Cracked,,B productionline\Gen4.1\B14352,B14352_TR_1_1819.tif|B14352_TR_2_1820.tif|B14352_TR_3_1821.tif,33.3,1.1,11.9,31,7.6
+B14352,CATHODE,top right,x100,2,Emil Andersen,Cracked,,B productionline\Gen4.1\B14352,B14352_TR_1_1819.tif|B14352_TR_2_1820.tif|B14352_TR_3_1821.tif,30.1,1.1,10.7,32.4,8.1
+B14352,CATHODE,top right,x100,3,Emil Andersen,Cracked,,B productionline\Gen4.1\B14352,B14352_TR_1_1819.tif|B14352_TR_2_1820.tif|B14352_TR_3_1821.tif,29,1.1,9.5,37.7,8.2
+B14369,CATHODE,top right,x100,1,Daniel Frank,Microcracks,,B productionline\Gen4.1\B14369,B14369_TR_1_1832.tif|B14369_TR_2_1833.tif|B14369_TR_3_1834.tif,30.6,1.1,12,23.7,6.5
+B14369,CATHODE,top right,x100,2,Daniel Frank,Microcracks,,B productionline\Gen4.1\B14369,B14369_TR_1_1832.tif|B14369_TR_2_1833.tif|B14369_TR_3_1834.tif,29.2,1.2,8.3,27.5,7.7
+B14369,CATHODE,top right,x100,3,Daniel Frank,Microcracks,,B productionline\Gen4.1\B14369,B14369_TR_1_1832.tif|B14369_TR_2_1833.tif|B14369_TR_3_1834.tif,28.8,1.1,14.5,26.7,7.8
+B14365,CATHODE,top right,x100,1,Daniel Frank,Fine,,B productionline\Gen4.1\B14365,B14365_TR_1_1835.tif|B14365_TR_2_1836.tif|B14365_TR_3_1837.tif|B14365_TR_3_1838.tif,20.6,1.1,9.8,31.5,10
+B14365,CATHODE,top right,x100,2,Daniel Frank,Fine,,B productionline\Gen4.1\B14365,B14365_TR_1_1835.tif|B14365_TR_2_1836.tif|B14365_TR_3_1837.tif|B14365_TR_3_1838.tif,27.6,0.9,11.6,27.9,8.3
+B14365,CATHODE,top right,x100,3,Daniel Frank,Fine,,B productionline\Gen4.1\B14365,B14365_TR_1_1835.tif|B14365_TR_2_1836.tif|B14365_TR_3_1837.tif|B14365_TR_3_1838.tif,23.6,0.9,11.6,29.8,9.2
+B14378,CATHODE,top right,x100,1,Marcus Rodell,Microcracks,,B productionline\Gen4.1\B14378,B14378_TR_1_1838.tif|B14378_TR_2_1839.tif|B14378_TR_3_1840.tif,31.1,1.5,9.5,28,7.8
+B14378,CATHODE,top right,x100,2,Marcus Rodell,Microcracks,,B productionline\Gen4.1\B14378,B14378_TR_1_1838.tif|B14378_TR_2_1839.tif|B14378_TR_3_1840.tif,31.9,1.3,10.1,28.1,7.8
+B14378,CATHODE,top right,x100,3,Marcus Rodell,Microcracks,,B productionline\Gen4.1\B14378,B14378_TR_1_1838.tif|B14378_TR_2_1839.tif|B14378_TR_3_1840.tif,33.2,1.4,7.8,29.8,8.1
+B14386,CATHODE,top right,x100,1,Marcus Rodell,Less cracked,,B productionline\Gen4.1\B14386,B14386_TR_1_1841.tif|B14386_TR_2_1842.tif|B14386_TR_3_1843.tif,29,1.8,8.2,28.3,7.7
+B14386,CATHODE,top right,x100,2,Marcus Rodell,Less cracked,,B productionline\Gen4.1\B14386,B14386_TR_1_1841.tif|B14386_TR_2_1842.tif|B14386_TR_3_1843.tif,25.4,2,6.5,32.1,8.9
+B14386,CATHODE,top right,x100,3,Marcus Rodell,Less cracked,,B productionline\Gen4.1\B14386,B14386_TR_1_1841.tif|B14386_TR_2_1842.tif|B14386_TR_3_1843.tif,24.3,2.1,5.9,35,10.1
+B14375,CATHODE,top right,x100,1,Marcus Rodell,Few microcracks,,B productionline\Gen4.1\B14375,B14375_TR_1_1844.tif|B14375_TR_2_1845.tif|B14375_TR_3_1846.tif,30.1,1.3,10,26.8,7.5
+B14375,CATHODE,top right,x100,2,Marcus Rodell,Few microcracks,,B productionline\Gen4.1\B14375,B14375_TR_1_1844.tif|B14375_TR_2_1845.tif|B14375_TR_3_1846.tif,26.4,1.4,9.1,29,8.6
+B14375,CATHODE,top right,x100,3,Marcus Rodell,Few microcracks,,B productionline\Gen4.1\B14375,B14375_TR_1_1844.tif|B14375_TR_2_1845.tif|B14375_TR_3_1846.tif,29.5,1.3,9.6,27.5,7.8
+B14383,CATHODE,top right,x100,1,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B14383,B14383_TR_1_1848.tif|B14383_TR_1_1859.tif|B14383_TR_2_1849.tif|B14383_TR_2_1860.tif|B14383_TR_3_1850.tif|B14383_TR_3_1861.tif,32.4,1.6,6.1,29.5,8.2
+B14383,CATHODE,top right,x100,2,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B14383,B14383_TR_1_1848.tif|B14383_TR_1_1859.tif|B14383_TR_2_1849.tif|B14383_TR_2_1860.tif|B14383_TR_3_1850.tif|B14383_TR_3_1861.tif,33.5,1.5,6.5,31.1,8.5
+B14383,CATHODE,top right,x100,3,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B14383,B14383_TR_1_1848.tif|B14383_TR_1_1859.tif|B14383_TR_2_1849.tif|B14383_TR_2_1860.tif|B14383_TR_3_1850.tif|B14383_TR_3_1861.tif,31.1,1.8,,37.9,10.5
+B14396,CATHODE,top right,x100,1,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B14396,B14396_TR_1_1855.tif|B14396_TR_1_1862.tif|B14396_TR_2_1863.tif|B14396_TR_3_1864.tif,26,1.9,6.8,31.4,8.4
+B14396,CATHODE,top right,x100,2,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B14396,B14396_TR_1_1855.tif|B14396_TR_1_1862.tif|B14396_TR_2_1863.tif|B14396_TR_3_1864.tif,28.5,1.8,6.9,29.5,7.8
+B14396,CATHODE,top right,x100,3,Oniel Rhe Lauron,Less cracked,,B productionline\Gen4.1\B14396,B14396_TR_1_1855.tif|B14396_TR_1_1862.tif|B14396_TR_2_1863.tif|B14396_TR_3_1864.tif,27.9,1.9,6,31.1,8.6
+B14404,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Very few microcracks,,B productionline\Gen4.1\B14404,B14404_TR_1_1856.tif|B14404_TR_2_1857.tif|B14404_TR_3_1858.tif,22.9,1.7,9.9,29,7.9
+B14404,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Very few microcracks,,B productionline\Gen4.1\B14404,B14404_TR_1_1856.tif|B14404_TR_2_1857.tif|B14404_TR_3_1858.tif,29.8,1.4,12.1,23.1,6.5
+B14404,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Very few microcracks,,B productionline\Gen4.1\B14404,B14404_TR_1_1856.tif|B14404_TR_2_1857.tif|B14404_TR_3_1858.tif,24.1,1.5,12,27.8,8
+B14414,CATHODE,top right,x100,1,Tamas Pakai,few microcracks,,B productionline\Gen4.1\B14414,B14414_TR_1_1868.tif|B14414_TR_2_1869.tif|B14414_TR_3_1870.tif,28.2,1.3,9.2,25.4,7.8
+B14414,CATHODE,top right,x100,2,Tamas Pakai,few microcracks,,B productionline\Gen4.1\B14414,B14414_TR_1_1868.tif|B14414_TR_2_1869.tif|B14414_TR_3_1870.tif,31.5,1.4,8.8,27.3,7.5
+B14414,CATHODE,top right,x100,3,Tamas Pakai,few microcracks,,B productionline\Gen4.1\B14414,B14414_TR_1_1868.tif|B14414_TR_2_1869.tif|B14414_TR_3_1870.tif,26.7,1.5,7.8,28.5,8.3
+B14421,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14421,B14421_TR_1_1871.tif|B14421_TR_2_1872.tif|B14421_TR_3_1873.tif,32.4,1.2,11.7,25.6,6.9
+B14421,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14421,B14421_TR_1_1871.tif|B14421_TR_2_1872.tif|B14421_TR_3_1873.tif,33.5,1.1,11.2,22.2,6.6
+B14421,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14421,B14421_TR_1_1871.tif|B14421_TR_2_1872.tif|B14421_TR_3_1873.tif,27.6,1.3,11.7,25.5,7.4
+B14418,CATHODE,top right,x100,1,Tamas Pakai,few microcracks,,B productionline\Gen4.1\B14418,B14418_TR_1_1865.tif|B14418_TR_2_1866.tif|B14418_TR_3_1867.tif,27,1.3,8.7,26.5,7.5
+B14418,CATHODE,top right,x100,2,Tamas Pakai,few microcracks,,B productionline\Gen4.1\B14418,B14418_TR_1_1865.tif|B14418_TR_2_1866.tif|B14418_TR_3_1867.tif,24.4,1.3,9.9,26.4,8.1
+B14418,CATHODE,top right,x100,3,Tamas Pakai,few microcracks,,B productionline\Gen4.1\B14418,B14418_TR_1_1865.tif|B14418_TR_2_1866.tif|B14418_TR_3_1867.tif,23.4,1.4,10,26.5,8.2
+B14425,CATHODE,top right,x100,1,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14425,B14425_TR_1_1868.tif|B14425_TR_2_1869.tif|B14425_TR_3_1870.tif,29,1.2,12.2,25.3,7.6
+B14425,CATHODE,top right,x100,2,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14425,B14425_TR_1_1868.tif|B14425_TR_2_1869.tif|B14425_TR_3_1870.tif,34.2,1,11.5,23.9,6.9
+B14425,CATHODE,top right,x100,3,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14425,B14425_TR_1_1868.tif|B14425_TR_2_1869.tif|B14425_TR_3_1870.tif,30,1.2,11,24,7.2
+B14431,CATHODE,top right,x100,1,Tamas Pakai,microcracks 9th electrode - Vat 30,,B productionline\Gen4.1\B14431,B14431_TR_1_1877.tif|B14431_TR_2_1878.tif|B14431_TR_3_1879.tif,21.6,0.6,8.3,24,6
+B14431,CATHODE,top right,x100,2,Tamas Pakai,microcracks 9th electrode - Vat 30,,B productionline\Gen4.1\B14431,B14431_TR_1_1877.tif|B14431_TR_2_1878.tif|B14431_TR_3_1879.tif,22.2,0.5,8.8,24.5,6.1
+B14431,CATHODE,top right,x100,3,Tamas Pakai,microcracks 9th electrode - Vat 30,,B productionline\Gen4.1\B14431,B14431_TR_1_1877.tif|B14431_TR_2_1878.tif|B14431_TR_3_1879.tif,20.3,0.7,7.9,26.4,6.8
+B14439,CATHODE,top right,x100,1,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14439,B14439_TR_1_1880.tif|B14439_TR_2_1881.tif|B14439_TR_3_1882.tif,28.9,1.1,9.7,28.1,7.9
+B14439,CATHODE,top right,x100,2,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14439,B14439_TR_1_1880.tif|B14439_TR_2_1881.tif|B14439_TR_3_1882.tif,32.5,1.1,12.6,22.9,7.3
+B14439,CATHODE,top right,x100,3,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14439,B14439_TR_1_1880.tif|B14439_TR_2_1881.tif|B14439_TR_3_1882.tif,31.3,1.1,13.4,24.1,7.1
+B14440,CATHODE,top right,x100,1,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14440,B14440_TR_1_1883.tif|B14440_TR_2_1884.tif|B14440_TR_3_1885.tif,26.6,0.6,13.5,23.6,7.2
+B14440,CATHODE,top right,x100,2,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14440,B14440_TR_1_1883.tif|B14440_TR_2_1884.tif|B14440_TR_3_1885.tif,25.4,0.5,25.4,25,7.7
+B14440,CATHODE,top right,x100,3,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14440,B14440_TR_1_1883.tif|B14440_TR_2_1884.tif|B14440_TR_3_1885.tif,28.4,0.6,10.9,27,7.7
+B14449,CATHODE,top right,x100,1,Tamas Pakai,Few microcracks Vat 30,,B productionline\Gen4.1\B14449,B14449_TR_1_1886.tif|B14449_TR_2_1888.tif|B14449_TR_3_1889.tif,27.3,0.6,11.8,25.2,7.8
+B14449,CATHODE,top right,x100,2,Tamas Pakai,Few microcracks Vat 30,,B productionline\Gen4.1\B14449,B14449_TR_1_1886.tif|B14449_TR_2_1888.tif|B14449_TR_3_1889.tif,29,0.6,10.6,27.4,8.3
+B14449,CATHODE,top right,x100,3,Tamas Pakai,Few microcracks Vat 30,,B productionline\Gen4.1\B14449,B14449_TR_1_1886.tif|B14449_TR_2_1888.tif|B14449_TR_3_1889.tif,23.7,0.7,12,28.3,8.8
+B14450,CATHODE,top right,x100,1,Tamas Pakai,Few microcracks Vat 28,,B productionline\Gen4.1\B14450,B14450_TR_1_1890.tif|B14450_TR_2_1891.tif|B14450_TR_3_1892.tif,30.6,1.2,8.1,26.1,7.7
+B14450,CATHODE,top right,x100,2,Tamas Pakai,Few microcracks Vat 28,,B productionline\Gen4.1\B14450,B14450_TR_1_1890.tif|B14450_TR_2_1891.tif|B14450_TR_3_1892.tif,30.2,1.2,8.2,24.2,7.7
+B14450,CATHODE,top right,x100,3,Tamas Pakai,Few microcracks Vat 28,,B productionline\Gen4.1\B14450,B14450_TR_1_1890.tif|B14450_TR_2_1891.tif|B14450_TR_3_1892.tif,29.4,1.2,7,25.5,7.9
+B14237,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14237,B14237_TR_1_1893.tif|B14237_TR_2_1894.tif|B14237_TR_3_1895.tif,25.7,1.8,7,33.1,8.6
+B14237,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14237,B14237_TR_1_1893.tif|B14237_TR_2_1894.tif|B14237_TR_3_1895.tif,25.5,1.7,6.8,33,8.5
+B14237,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14237,B14237_TR_1_1893.tif|B14237_TR_2_1894.tif|B14237_TR_3_1895.tif,32.8,1.6,7.6,27.7,7
+B14463,CATHODE,top right,x100,1,Tamas Pakai,Few small cracks Vat 30,,B productionline\Gen4.1\B14463,B14463_TR_1_1896.tif|B14463_TR_2_1897.tif|B14463_TR_3_1898.tif,28.7,0.6,10.1,27.2,8.3
+B14463,CATHODE,top right,x100,2,Tamas Pakai,Few small cracks Vat 30,,B productionline\Gen4.1\B14463,B14463_TR_1_1896.tif|B14463_TR_2_1897.tif|B14463_TR_3_1898.tif,34.5,0.6,11.6,27.5,7.9
+B14463,CATHODE,top right,x100,3,Tamas Pakai,Few small cracks Vat 30,,B productionline\Gen4.1\B14463,B14463_TR_1_1896.tif|B14463_TR_2_1897.tif|B14463_TR_3_1898.tif,28.3,0.6,11.1,26.7,7.6
+B14474,CATHODE,top right,x100,1,Tamas Pakai,small cracks,,B productionline\Gen4.1\B14474,B14474_TR_1_1899.tif|B14474_TR_2_1900.tif|B14474_TR_3_1901.tif,28.4,0.7,7.3,33.7,10
+B14474,CATHODE,top right,x100,2,Tamas Pakai,small cracks,,B productionline\Gen4.1\B14474,B14474_TR_1_1899.tif|B14474_TR_2_1900.tif|B14474_TR_3_1901.tif,28.5,0.7,8,33.5,9.5
+B14474,CATHODE,top right,x100,3,Tamas Pakai,small cracks,,B productionline\Gen4.1\B14474,B14474_TR_1_1899.tif|B14474_TR_2_1900.tif|B14474_TR_3_1901.tif,23.6,0.7,7.2,35.6,10.3
+B14475,CATHODE,top right,x100,1,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14475,B14475_TR_1_1902.tif|B14475_TR_2_1903.tif|B14475_TR_3_1904.tif,25.6,1.2,14.1,22.8,7.7
+B14475,CATHODE,top right,x100,2,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14475,B14475_TR_1_1902.tif|B14475_TR_2_1903.tif|B14475_TR_3_1904.tif,27.5,1.3,11.6,27.4,8.2
+B14475,CATHODE,top right,x100,3,Tamas Pakai,microcracks,,B productionline\Gen4.1\B14475,B14475_TR_1_1902.tif|B14475_TR_2_1903.tif|B14475_TR_3_1904.tif,30.8,1.1,11.9,23.9,7.1
+B14240,CATHODE,top right,x100,1,Daniel Frank,Microcracks,,B productionline\Gen4.1\B14240,B14240_TR_1_1905.tif|B14240_TR_2_1906.tif|B14240_TR_3_1907.tif,23.3,1.4,4.8,32.6,9.3
+B14240,CATHODE,top right,x100,2,Daniel Frank,Microcracks,,B productionline\Gen4.1\B14240,B14240_TR_1_1905.tif|B14240_TR_2_1906.tif|B14240_TR_3_1907.tif,30.5,1.2,6.7,25.8,8.2
+B14240,CATHODE,top right,x100,3,Daniel Frank,Microcracks,,B productionline\Gen4.1\B14240,B14240_TR_1_1905.tif|B14240_TR_2_1906.tif|B14240_TR_3_1907.tif,31.1,1.2,7.6,26.7,8
+B14500,CATHODE,top right,x100,1,Frederik Simonsen,Less cracked Vat 30,,B productionline\Gen4.1\B14500,B14500_TR_1_1908.tif|B14500_TR_2_1909.tif|B14500_TR_3_1910.tif,26.6,0.9,11,29.3,8.3
+B14500,CATHODE,top right,x100,2,Frederik Simonsen,Less cracked Vat 30,,B productionline\Gen4.1\B14500,B14500_TR_1_1908.tif|B14500_TR_2_1909.tif|B14500_TR_3_1910.tif,32.9,0.8,10.5,25.7,7.2
+B14500,CATHODE,top right,x100,3,Frederik Simonsen,Less cracked Vat 30,,B productionline\Gen4.1\B14500,B14500_TR_1_1908.tif|B14500_TR_2_1909.tif|B14500_TR_3_1910.tif,27,0.8,11.9,28.9,8.3
+B14499,CATHODE,top right,x100,1,Frederik Simonsen,Less cracked Vat 28,,B productionline\Gen4.1\B14499,B14499_TR_1_1911.tif|B14499_TR_2_1912.tif|B14499_TR_3_1913.tif,25.3,1.7,8.4,30.5,8.2
+B14499,CATHODE,top right,x100,2,Frederik Simonsen,Less cracked Vat 28,,B productionline\Gen4.1\B14499,B14499_TR_1_1911.tif|B14499_TR_2_1912.tif|B14499_TR_3_1913.tif,28.7,1.5,11.7,28.2,7.5
+B14499,CATHODE,top right,x100,3,Frederik Simonsen,Less cracked Vat 28,,B productionline\Gen4.1\B14499,B14499_TR_1_1911.tif|B14499_TR_2_1912.tif|B14499_TR_3_1913.tif,28.8,1.8,7.8,29.6,7.5
+B14488,CATHODE,top right,x100,1,Frederik Simonsen,Microcracks,,B productionline\Gen4.1\B14488,B14488_TR_1_1914.tif|B14488_TR_2_1915.tif|B14488_TR_3_1916.tif,25.7,0.7,10.1,31.3,9
+B14488,CATHODE,top right,x100,2,Frederik Simonsen,Microcracks,,B productionline\Gen4.1\B14488,B14488_TR_1_1914.tif|B14488_TR_2_1915.tif|B14488_TR_3_1916.tif,30.2,0.6,12.8,28.1,8.5
+B14488,CATHODE,top right,x100,3,Frederik Simonsen,Microcracks,,B productionline\Gen4.1\B14488,B14488_TR_1_1914.tif|B14488_TR_2_1915.tif|B14488_TR_3_1916.tif,29.7,0.6,10.4,28.7,8.2
+B14513,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14513,B14513_TR_1_1917.tif|B14513_TR_2_1918.tif|B14513_TR_3_1919.tif,30.3,0.8,8.2,31.5,9.2
+B14513,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14513,B14513_TR_1_1917.tif|B14513_TR_2_1918.tif|B14513_TR_3_1919.tif,25.9,0.7,10,30.7,9.2
+B14513,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro cracks,,B productionline\Gen4.1\B14513,B14513_TR_1_1917.tif|B14513_TR_2_1918.tif|B14513_TR_3_1919.tif,28.2,1,8.1,32.8,9.5
+B14524,CATHODE,top right,x100,1,Tamas Pakai,less cracked Vat 30,,B productionline\Gen4.1\B14524,B14524_TR_1_1920.tif|B14524_TR_2_1921.tif|B14524_TR_3_1922.tif,28.9,0.9,10.7,28.8,8.2
+B14524,CATHODE,top right,x100,2,Tamas Pakai,less cracked Vat 30,,B productionline\Gen4.1\B14524,B14524_TR_1_1920.tif|B14524_TR_2_1921.tif|B14524_TR_3_1922.tif,32.6,0.8,11,26.6,7.3
+B14524,CATHODE,top right,x100,3,Tamas Pakai,less cracked Vat 30,,B productionline\Gen4.1\B14524,B14524_TR_1_1920.tif|B14524_TR_2_1921.tif|B14524_TR_3_1922.tif,32.2,0.8,10.9,26.2,7.5
+B14525,CATHODE,top right,x100,1,Tamas Pakai,Cracked Vat 28,,B productionline\Gen4.1\B14525,B14525_TR_1_1923.tif|B14525_TR_2_1924.tif|B14525_TR_3_1925.tif,29.4,1.2,12.7,25.9,7.2
+B14525,CATHODE,top right,x100,2,Tamas Pakai,Cracked Vat 28,,B productionline\Gen4.1\B14525,B14525_TR_1_1923.tif|B14525_TR_2_1924.tif|B14525_TR_3_1925.tif,32,1.4,8.9,27,7.1
+B14525,CATHODE,top right,x100,3,Tamas Pakai,Cracked Vat 28,,B productionline\Gen4.1\B14525,B14525_TR_1_1923.tif|B14525_TR_2_1924.tif|B14525_TR_3_1925.tif,26.8,1.3,10,29,7.8
+B14537,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro cracks Vat 30,,B productionline\Gen4.1\B14537,B14537_TR_1_1926.tif|B14537_TR_2_1927.tif|B14537_TR_3_1928.tif,29.1,0.9,8.2,32.2,8.7
+B14537,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro cracks Vat 30,,B productionline\Gen4.1\B14537,B14537_TR_1_1926.tif|B14537_TR_2_1927.tif|B14537_TR_3_1928.tif,27.6,0.9,7.2,32.6,9.4
+B14537,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro cracks Vat 30,,B productionline\Gen4.1\B14537,B14537_TR_1_1926.tif|B14537_TR_2_1927.tif|B14537_TR_3_1928.tif,29.4,0.9,7.2,32.9,8.9
+B14551,CATHODE,top right,x100,1,Tamas Pakai,Few small/micro cracks Vat 28,,B productionline\Gen4.1\B14551,B14551_TR_1_1929.tif|B14551_TR_2_1930.tif|B14551_TR_3_1931.tif,23.4,1.4,13.8,22.8,8.3
+B14551,CATHODE,top right,x100,2,Tamas Pakai,Few small/micro cracks Vat 28,,B productionline\Gen4.1\B14551,B14551_TR_1_1929.tif|B14551_TR_2_1930.tif|B14551_TR_3_1931.tif,25.5,1.1,14,22.3,7.4
+B14551,CATHODE,top right,x100,3,Tamas Pakai,Few small/micro cracks Vat 28,,B productionline\Gen4.1\B14551,B14551_TR_1_1929.tif|B14551_TR_2_1930.tif|B14551_TR_3_1931.tif,23.6,1.2,12.6,23.8,8
+B14548,CATHODE,top right,x100,1,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14548,B14548_TR_1_1932.tif|B14548_TR_2_1933.tif|B14548_TR_3_1934.tif,28.4,1.3,9.4,31.1,8.5
+B14548,CATHODE,top right,x100,2,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14548,B14548_TR_1_1932.tif|B14548_TR_2_1933.tif|B14548_TR_3_1934.tif,23.9,1.5,9.1,29.2,8.3
+B14548,CATHODE,top right,x100,3,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14548,B14548_TR_1_1932.tif|B14548_TR_2_1933.tif|B14548_TR_3_1934.tif,28,1.4,9,31.1,8.1
+B14560,CATHODE,top right,x100,1,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14560,B14560_TR_1_1935.tif|B14560_TR_2_1936.tif|B14560_TR_3_1937.tif,31.4,1.1,10.9,26.1,7.1
+B14560,CATHODE,top right,x100,2,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14560,B14560_TR_1_1935.tif|B14560_TR_2_1936.tif|B14560_TR_3_1937.tif,34.3,1.1,9.8,27.7,7.5
+B14560,CATHODE,top right,x100,3,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14560,B14560_TR_1_1935.tif|B14560_TR_2_1936.tif|B14560_TR_3_1937.tif,31.5,1.2,7,30.6,8.4
+B14566,CATHODE,top right,x100,1,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14566,B14566_TR_1_1938.tif|B14566_TR_2_1939.tif|B14566_TR_3_1940.tif,28,1.6,,40.9,10.5
+B14566,CATHODE,top right,x100,2,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14566,B14566_TR_1_1938.tif|B14566_TR_2_1939.tif|B14566_TR_3_1940.tif,29.5,1.2,5.6,34,9.2
+B14566,CATHODE,top right,x100,3,Tamas Pakai,Cracked Vat 30,,B productionline\Gen4.1\B14566,B14566_TR_1_1938.tif|B14566_TR_2_1939.tif|B14566_TR_3_1940.tif,27,1.3,7.1,33.9,8.6
+B14572,CATHODE,top right,x100,1,Tamas Pakai,Small cracks Vat 30,,B productionline\Gen4.1\B14572,B14572_TR_1_1941.tif|B14572_TR_2_1942.tif|B14572_TR_3_1943.tif,27.4,1.2,9.7,29.8,8.6
+B14572,CATHODE,top right,x100,2,Tamas Pakai,Small cracks Vat 30,,B productionline\Gen4.1\B14572,B14572_TR_1_1941.tif|B14572_TR_2_1942.tif|B14572_TR_3_1943.tif,26.6,1.1,13.1,27.2,8.5
+B14572,CATHODE,top right,x100,3,Tamas Pakai,Small cracks Vat 30,,B productionline\Gen4.1\B14572,B14572_TR_1_1941.tif|B14572_TR_2_1942.tif|B14572_TR_3_1943.tif,30.7,1,11.4,25.4,7.7
+B14575,CATHODE,top right,x100,1,Tamas Pakai,Few microcacks Vat 28,,B productionline\Gen4.1\B14575,B14575_TR_1_1944.tif|B14575_TR_2_1945.tif|B14575_TR_3_1946.tif,24.9,3.2,13.3,24.6,7
+B14575,CATHODE,top right,x100,2,Tamas Pakai,Few microcacks Vat 28,,B productionline\Gen4.1\B14575,B14575_TR_1_1944.tif|B14575_TR_2_1945.tif|B14575_TR_3_1946.tif,26.4,3.1,11.7,24.2,7
+B14575,CATHODE,top right,x100,3,Tamas Pakai,Few microcacks Vat 28,,B productionline\Gen4.1\B14575,B14575_TR_1_1944.tif|B14575_TR_2_1945.tif|B14575_TR_3_1946.tif,26.9,3.6,10,27.7,7.2
+B14584,CATHODE,top right,x100,1,Tamas Pakai,Very few small cracks Vat 30,,B productionline\Gen4.1\B14584,B14584_TR_1_1947.tif|B14584_TR_2_1948.tif|B14584_TR_3_1949.tif,30.8,1.3,8.8,26.6,7.4
+B14584,CATHODE,top right,x100,2,Tamas Pakai,Very few small cracks Vat 30,,B productionline\Gen4.1\B14584,B14584_TR_1_1947.tif|B14584_TR_2_1948.tif|B14584_TR_3_1949.tif,36.1,1.2,9.2,23.4,6.7
+B14584,CATHODE,top right,x100,3,Tamas Pakai,Very few small cracks Vat 30,,B productionline\Gen4.1\B14584,B14584_TR_1_1947.tif|B14584_TR_2_1948.tif|B14584_TR_3_1949.tif,27,1.3,12.2,26.6,7.9
+B14519,CATHODE,top right,x100,1,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14519,B14519_TR_1_1950.tif|B14519_TR_2_1951.tif|B14519_TR_3_1952.tif,31.3,1.1,8.4,29.2,7.7
+B14519,CATHODE,top right,x100,2,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14519,B14519_TR_1_1950.tif|B14519_TR_2_1951.tif|B14519_TR_3_1952.tif,32.1,1.3,8.5,28,7.1
+B14519,CATHODE,top right,x100,3,Tamas Pakai,Microcracks,,B productionline\Gen4.1\B14519,B14519_TR_1_1950.tif|B14519_TR_2_1951.tif|B14519_TR_3_1952.tif,31.2,1.3,9.6,29.9,8
+B14531,CATHODE,top right,x100,1,Tamas Pakai,Less cracked,,B productionline\Gen4.1\B14531,B14531_TR_1_1953.tif|B14531_TR_2_1954.tif|B14531_TR_3_1955.tif,26,1.3,11.5,27.1,7.5
+B14531,CATHODE,top right,x100,2,Tamas Pakai,Less cracked,,B productionline\Gen4.1\B14531,B14531_TR_1_1953.tif|B14531_TR_2_1954.tif|B14531_TR_3_1955.tif,27.5,1.3,11.7,27.5,7.4
+B14531,CATHODE,top right,x100,3,Tamas Pakai,Less cracked,,B productionline\Gen4.1\B14531,B14531_TR_1_1953.tif|B14531_TR_2_1954.tif|B14531_TR_3_1955.tif,26.3,1.4,9.4,30.3,8.1
+B14542,CATHODE,top right,x100,1,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14542,B14542_TR_1_1956.tif|B14542_TR_2_1957.tif|B14542_TR_3_1958.tif,28.1,1,9.1,31.3,8.5
+B14542,CATHODE,top right,x100,2,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14542,B14542_TR_1_1956.tif|B14542_TR_2_1957.tif|B14542_TR_3_1958.tif,25.9,1,8.5,33.2,9.6
+B14542,CATHODE,top right,x100,3,Tamas Pakai,Cracked,,B productionline\Gen4.1\B14542,B14542_TR_1_1956.tif|B14542_TR_2_1957.tif|B14542_TR_3_1958.tif,32.9,0.9,9,28.1,7.6
+B14596,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks,,B productionline\Gen4.1\B14596,B14596_TR_1_1959.tif|B14596_TR_2_1960.tif|B14596_TR_3_1961.tif,22.9,0.9,14.6,23.5,8
+B14596,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks,,B productionline\Gen4.1\B14596,B14596_TR_1_1959.tif|B14596_TR_2_1960.tif|B14596_TR_3_1961.tif,20.3,1.1,14.3,24.2,8.8
+B14596,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks,,B productionline\Gen4.1\B14596,B14596_TR_1_1959.tif|B14596_TR_2_1960.tif|B14596_TR_3_1961.tif,20.4,1,15.8,23.5,8.4
+B14599,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks Vat 28,,B productionline\Gen4.1\B14599,B14599_TR_1_1962.tif|B14599_TR_2_1963.tif|B14599_TR_3_1964.tif,29.4,2.6,7.9,28.7,7.5
+B14599,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks Vat 28,,B productionline\Gen4.1\B14599,B14599_TR_1_1962.tif|B14599_TR_2_1963.tif|B14599_TR_3_1964.tif,25.3,2.6,6.6,28.9,7.9
+B14599,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks Vat 28,,B productionline\Gen4.1\B14599,B14599_TR_1_1962.tif|B14599_TR_2_1963.tif|B14599_TR_3_1964.tif,24.7,2.8,6.6,29.1,8.4
+B14608,CATHODE,top right,x100,1,Aleksandra Hetmanczyk,Microcracks Vat 30,,B productionline\Gen4.1\B14608,B14608_TR_1_1965.tif|B14608_TR_2_1966.tif|B14608_TR_3_1967.tif,28.5,1,11.2,27,8
+B14608,CATHODE,top right,x100,2,Aleksandra Hetmanczyk,Microcracks Vat 30,,B productionline\Gen4.1\B14608,B14608_TR_1_1965.tif|B14608_TR_2_1966.tif|B14608_TR_3_1967.tif,22.8,1.2,8.5,33.5,9.4
+B14608,CATHODE,top right,x100,3,Aleksandra Hetmanczyk,Microcracks Vat 30,,B productionline\Gen4.1\B14608,B14608_TR_1_1965.tif|B14608_TR_2_1966.tif|B14608_TR_3_1967.tif,23.7,1.2,10.3,32.9,9.7

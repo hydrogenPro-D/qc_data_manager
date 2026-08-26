@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+build/
+dist/
+venv/
+.idea/
+.vscode/
+# Database connection configs (contain credentials — keep out of git)
+config/db_connection*.json
+!config/db_connection.example.json
+driver/
+*.dat
+data/examples/

@@ -1,0 +1,71 @@
+{
+  "schema": "dbo",
+  "table": "ProcessData",
+  "source": "dataloggingDev",
+  "vat_only": false,
+  "columns": [
+    {
+      "name": "Id",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Marking",
+      "type": "NVARCHAR",
+      "length": 20,
+      "precision": null,
+      "scale": null,
+      "datetime_precision": null,
+      "nullable": true
+    },
+    {
+      "name": "Proces",
+      "type": "INT",
+      "length": null,
+      "precision": 10,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Rcp_tid",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Aktuel_tid",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Ampere_timer",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Temperatur",
+      "type": "INT",
+      "length": null,
+      "precision": 10,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    }
+  ]
+}

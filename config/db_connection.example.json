@@ -1,0 +1,7 @@
+{
+  "DB_DRIVER": "ODBC Driver 18 for SQL Server",
+  "DB_SERVER": "your-server.database.windows.net",
+  "DB_DATABASE": "your-database",
+  "DB_USERNAME": "your-user",
+  "DB_PASSWORD": "your-password"
+}
