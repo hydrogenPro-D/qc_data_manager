@@ -193,8 +193,7 @@ class TestSemEdxTypeWidget(unittest.TestCase):
             sample(electrode="B14020", position="top right"),
             sample(electrode="B13871", position="center"),
         ]))
-        combo = self.widget.filter_bar._combos[FILTER_POSITION]
-        combo.setCurrentIndex(combo.findData("center"))
+        self.widget.filter_bar._combos[FILTER_POSITION].set_checked(["center"])
         self.assertEqual(self.widget.table.rowCount(), 1)
         self.assertEqual(self._cell(0, "Electrode"), "B13871")
 
@@ -205,8 +204,7 @@ class TestSemEdxTypeWidget(unittest.TestCase):
         ]))
         for key, value in ((FILTER_POSITION, "center"),
                            (FILTER_OPERATOR, "Tamas Pakai")):
-            combo = self.widget.filter_bar._combos[key]
-            combo.setCurrentIndex(combo.findData(value))
+            self.widget.filter_bar._combos[key].set_checked([value])
         self.assertEqual(self.widget.table.rowCount(), 1)
         self.assertEqual(self._cell(0, "Electrode"), "B14023")
 
@@ -406,9 +404,14 @@ class TestSemEdxWidget(unittest.TestCase):
                    return_value=r"C:\results\B14134"), \
                 patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
             dialog.return_value.operator = "Tamas Pakai"
+            # The zoom and the note are optional, and an untouched dialog hands
+            # back empty ones. A mock would otherwise hand back a truthy object
+            # and they would be sent as if somebody had typed them.
+            dialog.return_value.zoom = ""
+            dialog.return_value.note = ""
             self.widget.generations[GEN4_1_LABEL]._on_add_clicked()
 
-        # Once per sample, not once per measurement.
+        # Once per sample, not once per measurement, and only what was filled in.
         self.assertEqual(saved, [(GEN4_1_LABEL, "B14134", "top right",
                                   {str(SemEdxColumns.OPERATOR): "Tamas Pakai"})])
         self.assertTrue(dialog.call_args.kwargs["ask_operator"])

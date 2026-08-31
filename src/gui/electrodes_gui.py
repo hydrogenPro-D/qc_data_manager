@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QToolButton, QDialog,
     QPushButton, QScrollArea,
 )
-from PyQt6.QtCore import Qt, QEvent, QObject, QSize
+from PyQt6.QtCore import Qt, QEvent, QObject, QSize, QTimer
 from PyQt6.QtGui import QFont
 import pandas as pd
 import qtawesome as qta
@@ -29,8 +29,12 @@ from src.data_access.electrodes.status_ranges import collapse_to_ranges
 from .widgets.data_table_widget import DataTableWidget, CellStyle
 from .widgets.filter_bar_widget import FilterBarWidget, FilterDropdown
 from .widgets.table_delegates import (RowFillDelegate, StatusPillDelegate,
-                                      PillStyle, RowHighlight)
-from .widgets.status_donut_widget import StatusDonutWidget
+                                      PillStyle, RowHighlight,
+                                      LoadingCellDelegate)
+from .widgets.skeleton_overlay import (SkeletonOverlay, SHIMMER_TICK_MS,
+                                       pulse_strength)
+from .widgets.status_donut_widget import StatusDonutWidget, render_donut_png
+from src.data_access.electrodes.status_propagation import electrode_number
 from .widgets.status_edit_dialog import StatusEditDialog
 from .date_display import format_timestamp_for_display
 from src.data_access.electrodes.electrode_columns import (
@@ -66,21 +70,33 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
 #
 # Display only. The stored values are a live database contract and are
 # untouched; see status_label and status_value below for the round trip.
+# Display only. The stored values are the database contract and are untouched;
+# renaming one of those would be a coordinated migration, not a wording change.
 STATUS_DISPLAY_NAMES: dict[str, str] = {
     str(ElectrodeStatus.TESTED_AND_RELEASED): "Tested, passed",
     str(ElectrodeStatus.TESTED_AND_SCRAPPED): "Tested, failed",
+    # An electrode rejected on the strength of a neighbour, as opposed to the
+    # report's "Scrapped" line, which is every electrode that will not ship:
+    # these plus the tested ones, which testing destroys whatever the verdict.
+    str(ElectrodeStatus.SCRAPPED): "Rejected",
 }
 _STORED_BY_LABEL = {label: stored for stored, label in STATUS_DISPLAY_NAMES.items()}
 
-# The two scrap lines of the report summary, worded as the old workbook worded
-# them. The first is the electrodes that were never tested; the second adds
-# every tested one, passed or failed, since testing consumes it either way.
-SCRAP_WITHOUT_QC = "Scrapped (without QC)"
-SCRAP_WITH_QC = "Scrapped + scrapped due to QC"
+# The production block. Its four indented rows add up to the first, so a reader
+# can see nothing has been dropped: an electrode is released, scrapped, or still
+# waiting for QC to say which.
+ALL_PRODUCED = "All electrodes"
+SCRAPPED_TOTAL = "Scrapped"
+# Under it, the two reasons an electrode is gone, as management counts them.
+# A failed test is counted as a production fault, because the test is what found
+# the fault; only an electrode that passed and was destroyed anyway is counted
+# as the cost of testing.
+SCRAP_FAULTS = "Production faults"
+SCRAP_TESTING = "Consumed by testing"
 
-# The first row of that summary: everything the report covers, which is what
-# the rows beneath are a percentage of. Named as the old workbook named it.
-ALL_PRODUCED = "All produced electrodes"
+# The QC table's footing. Its rows are a share of this rather than of everything
+# produced, so a pass rate reads as a pass rate.
+ALL_TESTED = "All tested electrodes"
 
 
 def status_label(stored) -> str:
@@ -130,40 +146,121 @@ FILTER_TYPE = "type"
 FILTER_RECIPE = "recipe"
 FILTER_VAT = "vat"
 
+# The Vat filter's last option. The process log covers most electrodes but not
+# all, and without this the ones it misses can be seen but never picked out.
+VAT_UNKNOWN = "Unidentified"
+
 # Row tint, per status — one flat colour across the whole row. Hue carries the
 # outcome, depth carries the evidence: a verdict tested on the board gets the
 # stronger shade, one inherited from a neighbour the lighter. Not Tested stays
 # neutral, since it is not a verdict at all.
+#
+# Teal for good and rose for bad, not green and red. Red and green sit on the
+# axis that red-green colour blindness collapses, so the old pair was very hard
+# to tell apart: the worst two tints measured 2.8 (OKLab dE, simulated), where
+# 8 is the usual target. These measure 4.2. Pale fills can never do much better
+# than that, which is why the row also carries a coloured bar and a badge with
+# the status written on it.
 ROW_TINTS: dict[str, str] = {
-    str(ElectrodeStatus.TESTED_AND_RELEASED): "#BBEFCD",
-    str(ElectrodeStatus.RELEASED): "#DCF5E4",
-    str(ElectrodeStatus.TESTED_AND_SCRAPPED): "#F3AFAF",
-    str(ElectrodeStatus.SCRAPPED): "#F7C9C9",
+    str(ElectrodeStatus.TESTED_AND_RELEASED): "#84CDBC",
+    str(ElectrodeStatus.RELEASED): "#D2ECE5",
+    str(ElectrodeStatus.TESTED_AND_SCRAPPED): "#E88FA4",
+    str(ElectrodeStatus.SCRAPPED): "#F9CDC9",
     # Amber: an instruction rather than a verdict, so it shouldn't read as
     # either good or bad.
     str(ElectrodeStatus.NEEDS_TESTING): "#FDE8C4",
     str(ElectrodeStatus.NOT_TESTED): "#F3F4F6",
+    # Blue: the only family not already meaning good, bad or waiting, and it
+    # reads as work in progress rather than as an outcome.
+    str(ElectrodeStatus.TEST_ONGOING): "#CFE2FA",
 }
+# The accent bar and the donut slices. Chosen by measurement, not by eye: every
+# pair was scored in OKLab through protanope and deuteranope simulation, and
+# the worst pair is 9.0 where the old green/red palette scored 3.5, which is
+# indistinguishable. Two moves did it. The families sit on the teal/crimson
+# axis rather than green/red, which colour blindness leaves intact, and within
+# each family the two shades differ in saturation as well as lightness, one
+# deep and one soft, so they cannot collapse into each other either.
 ROW_ACCENTS: dict[str, str] = {
-    str(ElectrodeStatus.TESTED_AND_RELEASED): "#15803D",
-    str(ElectrodeStatus.RELEASED): "#22C55E",
-    str(ElectrodeStatus.TESTED_AND_SCRAPPED): "#991B1B",
-    str(ElectrodeStatus.SCRAPPED): "#EF4444",
-    str(ElectrodeStatus.NEEDS_TESTING): "#F59E0B",
-    str(ElectrodeStatus.NOT_TESTED): "#9CA3AF",
+    str(ElectrodeStatus.TESTED_AND_RELEASED): "#0D9488",
+    str(ElectrodeStatus.RELEASED): "#66C4B0",
+    str(ElectrodeStatus.TESTED_AND_SCRAPPED): "#7A0F2E",
+    str(ElectrodeStatus.SCRAPPED): "#E45A52",
+    str(ElectrodeStatus.NEEDS_TESTING): "#E09A26",
+    str(ElectrodeStatus.NOT_TESTED): "#555B64",
+    str(ElectrodeStatus.TEST_ONGOING): "#3566C7",
 }
 # Solid badge = tested on the QC board; outlined = inherited from a neighbour.
 # Keyed by the DISPLAYED text, since that is what the delegate is handed.
 PILL_STYLES: dict[str, PillStyle] = {
     status_label(ElectrodeStatus.TESTED_AND_RELEASED): PillStyle(
-        color="#15803D", background="#15803D", text="#FFFFFF", glyph="✓"),
-    status_label(ElectrodeStatus.RELEASED): PillStyle(color="#15803D", glyph="✓"),
+        color="#0B7268", background="#0B7268", text="#FFFFFF", glyph="✓"),
+    status_label(ElectrodeStatus.RELEASED): PillStyle(color="#0B7268", glyph="✓"),
     status_label(ElectrodeStatus.TESTED_AND_SCRAPPED): PillStyle(
-        color="#B91C1C", background="#B91C1C", text="#FFFFFF"),
-    status_label(ElectrodeStatus.SCRAPPED): PillStyle(color="#B91C1C"),
+        color="#8E1537", background="#8E1537", text="#FFFFFF"),
+    status_label(ElectrodeStatus.SCRAPPED): PillStyle(color="#8E1537"),
     status_label(ElectrodeStatus.NEEDS_TESTING): PillStyle(color="#B45309"),
-    status_label(ElectrodeStatus.NOT_TESTED): PillStyle(color="#6B7280"),
+    status_label(ElectrodeStatus.NOT_TESTED): PillStyle(color="#555B64"),
+    status_label(ElectrodeStatus.TEST_ONGOING): PillStyle(
+        color="#1D4ED8", background="#DBEAFE"),
 }
+
+# The dots that march after "Test ongoing". Padded to a fixed width so the badge
+# does not resize three times a second, which would read as a flicker rather
+# than as progress.
+ONGOING_DOTS = ("", ".", "..", "...")
+ONGOING_TICK_MS = 320
+
+# How long a row somebody else changed stays lit, and how often the wash is
+# stepped down. Long enough to catch the eye across the table, short enough
+# that it is gone before it becomes something to ignore.
+FLASH_MS = 1100
+FLASH_TICK_MS = 60
+
+# The zoom strip above the table. Round, and big enough to hit with a thumb,
+# since this tab is used standing at a tablet.
+ZOOM_BUTTON_STYLE = """
+    QPushButton {
+        background-color: #FFFFFF;
+        border: 1px solid #D1D5DB;
+        border-radius: 14px;
+        min-width: 28px;
+        max-width: 28px;
+        min-height: 28px;
+        max-height: 28px;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 15px;
+        font-weight: 700;
+        color: #6B7280;
+        padding: 0px;
+    }
+    QPushButton:hover { border: 1px solid #55BDBD; color: #14B8A6; }
+    QPushButton:pressed { background-color: #F0FAFA; }
+    QPushButton:disabled { color: #D1D5DB; border: 1px solid #EDEFF2; }
+"""
+ZOOM_LABEL_STYLE = ("color: #6B6B6B; font-size: 12px; font-weight: 600; "
+                    "min-width: 38px;")
+
+# The Vat column's placeholder while the process log is being read. Rate and
+# shape come from the skeleton overlay, so the two placeholders on this tab,
+# the whole-table one at launch and this column, breathe together.
+# What the badge is measured against, whichever frame is showing.
+ONGOING_WIDEST = status_label(ElectrodeStatus.TEST_ONGOING) + ONGOING_DOTS[-1]
+
+
+def ongoing_width_text(label: str) -> str:
+    """Measure an animated badge at its longest frame, so it holds still.
+
+    Anything riding along after the status, the test-first flag, is kept in the
+    measurement. Dropping it sized the badge for the status alone, so a flagged
+    one overflowed and Qt elided the flag to an ellipsis, which read as three
+    more dots on the end of the animation.
+    """
+    text = str(label).strip()
+    base = status_label(ElectrodeStatus.TEST_ONGOING)
+    if not text.startswith(base):
+        return label
+    return ONGOING_WIDEST + text[len(base):].lstrip(".")
 
 # The "!" is reserved for the electrodes to pull first, so it stays meaningful
 # instead of appearing on every one of the hundreds needing testing.
@@ -235,14 +332,24 @@ class ElectrodesWidget(QWidget):
             FilterDropdown(FILTER_TYPE, "Type"),
             FilterDropdown(FILTER_RECIPE, "Recipe"),
             FilterDropdown(FILTER_VAT, "Vat"),
-        ])
+        ], number_range="Electrode", stacked=True, with_clear=True)
         self.filter_bar.set_options(
             FILTER_STATUS, [status_label(s) for s in ElectrodeStatus])
         self.filter_bar.changed.connect(self._render)
+        # On the filters' second row rather than a line of its own, but held
+        # clear of the panel beside the table so it still sits above the
+        # table's right edge instead of the window's.
+        self.filter_bar.add_trailing(1, self._build_zoom_widget(),
+                                     right_inset=CHART_PANEL_WIDTH)
 
-        # The strip is one non-wrapping row of controls, so its own width would
-        # otherwise become the window's minimum. Let it scroll sideways instead.
-        filter_scroll = QScrollArea()
+        # The strip scrolls sideways rather than forcing its own width on the
+        # window. Its height then has to cover BOTH rows plus the scrollbar
+        # whenever that scrollbar is showing, or the scrollbar sits on top of
+        # the second row and hides it. Grown and shrunk as it comes and goes,
+        # rather than reserving the space permanently: on a wide window there
+        # is no scrollbar and those 40 pixels belong to the table.
+        self._filter_scroll = QScrollArea()
+        filter_scroll = self._filter_scroll
         filter_scroll.setWidgetResizable(True)
         filter_scroll.setFrameShape(QFrame.Shape.NoFrame)
         filter_scroll.setWidget(self.filter_bar)
@@ -251,11 +358,12 @@ class ElectrodesWidget(QWidget):
         filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         # The app's own scrollbar, the same one under the table, so the tab
         # does not mix two thicknesses on one screen.
-        filter_scroll.setFixedHeight(
-            self.filter_bar.sizeHint().height() + SCROLLBAR_HORIZONTAL_HEIGHT + 6)
         filter_scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
             + SCROLLBAR_STYLE)
+        bar = filter_scroll.horizontalScrollBar()
+        bar.rangeChanged.connect(lambda _lo, _hi: self._fit_filter_height())
+        self._fit_filter_height()
 
         self.table = DataTableWidget(
             min_column_width=70,
@@ -323,23 +431,48 @@ class ElectrodesWidget(QWidget):
         # reload would otherwise move the outline onto a different one.
         self._row_highlight = RowHighlight()
         self._picked_marking = ""
+        # Which frame of the marching dots is showing. Only ticks while a row
+        # on screen is actually being tested, so a table of settled electrodes
+        # costs nothing.
+        self._ongoing_frame = 0
+        self._ongoing_timer = QTimer(self)
+        self._ongoing_timer.setInterval(ONGOING_TICK_MS)
+        self._ongoing_timer.timeout.connect(self._advance_ongoing)
+
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setInterval(FLASH_TICK_MS)
+        self._flash_timer.timeout.connect(self._fade_flash)
+
+        self._shimmer_step = 0
+        self._shimmer_timer = QTimer(self)
+        self._shimmer_timer.setInterval(SHIMMER_TICK_MS)
+        self._shimmer_timer.timeout.connect(self._advance_shimmer)
+        self._vat_column: int | None = None
         self.table.setItemDelegate(
             RowFillDelegate(self._row_accent, 0, self.table,
                             highlight=self._row_highlight))
-        self.table.setItemDelegateForColumn(
-            list(COLUMN_DISPLAY_NAMES).index(STATUS_COLUMN),
-            # Gutter matches the hover pencil (22px) plus its margin. The widest
-            # label keeps the column wide enough even when no such row is among
-            # the ones Qt samples for content sizing.
-            StatusPillDelegate(status_pill_style, self.table, right_gutter=32,
-                               widest_label=WIDEST_STATUS_LABEL,
-                               highlight=self._row_highlight))
+        self._loading_delegate = LoadingCellDelegate(
+            self._shimmer_strength, self._row_accent, 0, self.table,
+            highlight=self._row_highlight)
+        # Covers the table until the first read lands. Not fake rows: those
+        # would reach the filter bar and the row styling.
+        self._skeleton = SkeletonOverlay(self.table, columns=6)
+        # Gutter matches the hover pencil (22px) plus its margin. The widest
+        # label keeps the column wide enough even when no such row is among the
+        # ones Qt samples for content sizing.
+        self._pill_delegate = StatusPillDelegate(
+            status_pill_style, self.table, right_gutter=32,
+            widest_label=WIDEST_STATUS_LABEL, highlight=self._row_highlight,
+            width_text=ongoing_width_text, display_text=self._animated_status)
+        # Which column it is on, decided after every render rather than here.
+        self._status_column: int | None = None
         self.table.cellClicked.connect(self._on_cell_clicked)
 
         # Status ratio of whatever the filters currently show, beside the table.
         self.status_chart = StatusDonutWidget(
             title="Status breakdown", unit_label="electrodes",
             diameter=DONUT_DIAMETER)
+        self.status_chart.set_info(self._status_definitions())
         self.report_button = QPushButton("Get report")
         self.report_button.setMinimumHeight(30)
         self.report_button.setStyleSheet(TOOLBAR_BUTTON_STYLE)
@@ -401,8 +534,24 @@ class ElectrodesWidget(QWidget):
     # ------------------------------------------------------------------
     # Data loading / filtering
     # ------------------------------------------------------------------
+    def show_loading(self) -> None:
+        """Say the first read is on its way, until ``load_data`` arrives."""
+        self._skeleton.start()
+        self.status_chart.set_loading(True)
+
+    def hide_loading(self) -> None:
+        """Give up on the placeholder, for a read that never answered.
+
+        The chart goes back to its ordinary empty state, which is the honest
+        one once there is nothing still coming.
+        """
+        self._skeleton.stop()
+        self.status_chart.set_loading(False)
+        self._update_status_chart()
+
     def load_data(self, dataframe: pd.DataFrame | None) -> None:
         """Take a new dataset, refresh the filter options and re-render."""
+        self._skeleton.stop()
         self.df_source = dataframe.copy() if dataframe is not None else None
         self._source_dates = self._parse_dates(self.df_source)
         self._refresh_filter_options()
@@ -482,19 +631,45 @@ class ElectrodesWidget(QWidget):
 
         # Empty until the process log has been read, and empty for good on a
         # database that has none. The dropdown then offers nothing but "All".
-        vats = set()
+        vats, unknown = set(), False
         if VAT_COLUMN in df.columns:
-            vats = {str(v).strip() for v in df[VAT_COLUMN] if str(v).strip()}
+            for value in df[VAT_COLUMN]:
+                text = str(value).strip()
+                if text:
+                    vats.add(text)
+                else:
+                    unknown = True
+        # While the column is still loading every row is blank, and offering
+        # nothing but Unidentified would be wrong. It comes back with the vats.
+        unknown = unknown and bool(vats)
         # A single vat sorts before the pairs, and both sort numerically: "30"
-        # must not come before "28, 30" the way text would put it.
+        # must not come before "28, 30" the way text would put it. Unidentified
+        # goes last, since it is not a vat.
+        options = sorted(
+            vats, key=lambda v: [int(n) for n in v.replace(" ", "").split(",")])
         self.filter_bar.set_options(
-            FILTER_VAT,
-            sorted(vats, key=lambda v: [int(n) for n in v.replace(" ", "").split(",")]))
+            FILTER_VAT, options + ([VAT_UNKNOWN] if unknown else []))
 
         if self._source_dates is not None:
             months = sorted(
                 {(d.year, d.month) for d in self._source_dates.dropna()}, reverse=True)
             self.filter_bar.set_month_options(months)
+
+    def _fit_filter_height(self) -> None:
+        """Keep every filter row on screen, scrollbar or no scrollbar.
+
+        The bar is two rows now. When the window is narrow enough for the
+        horizontal scrollbar to appear it needs its own height on top, or it
+        covers the bottom row and the date and range filters vanish.
+        """
+        scroll = getattr(self, "_filter_scroll", None)
+        if scroll is None:
+            return
+        needed = self.filter_bar.sizeHint().height() + 6
+        if scroll.horizontalScrollBar().maximum() > 0:
+            needed += SCROLLBAR_HORIZONTAL_HEIGHT
+        if scroll.height() != needed:
+            scroll.setFixedHeight(needed)
 
     def _filtered(self) -> pd.DataFrame:
         """df_source narrowed by every active filter — they combine."""
@@ -504,26 +679,45 @@ class ElectrodesWidget(QWidget):
 
         mask = pd.Series(True, index=df.index)
 
-        status = self.filter_bar.value(FILTER_STATUS)
-        if status and STATUS_COLUMN in df.columns:
+        statuses = self.filter_bar.values(FILTER_STATUS)
+        if statuses and STATUS_COLUMN in df.columns:
             # The dropdown offers labels, the frame holds stored values.
-            mask &= df[STATUS_COLUMN].astype(str).str.strip() == status_value(status)
+            wanted = {status_value(s) for s in statuses}
+            mask &= df[STATUS_COLUMN].astype(str).str.strip().isin(wanted)
 
-        electrode_type = self.filter_bar.value(FILTER_TYPE)
+        types = self.filter_bar.values(FILTER_TYPE)
         type_column = str(ElectrodeColumns.FULL_NAME)
-        if electrode_type and type_column in df.columns:
-            mask &= df[type_column].astype(str).str.strip() == electrode_type
+        if types and type_column in df.columns:
+            mask &= df[type_column].astype(str).str.strip().isin(set(types))
 
-        vat = self.filter_bar.value(FILTER_VAT)
-        if vat and VAT_COLUMN in df.columns:
+        vats = self.filter_bar.values(FILTER_VAT)
+        if vats and VAT_COLUMN in df.columns:
+            column = df[VAT_COLUMN].astype(str).str.strip()
             # Matched whole, not by substring: an electrode plated in 28 and 30
             # is its own answer and does not belong under either on its own.
-            mask &= df[VAT_COLUMN].astype(str).str.strip() == vat
+            wanted = column.isin({v for v in vats if v != VAT_UNKNOWN})
+            if VAT_UNKNOWN in vats:
+                wanted |= column == ""
+            mask &= wanted
 
-        recipe = self.filter_bar.value(FILTER_RECIPE)
+        recipes = self.filter_bar.values(FILTER_RECIPE)
         recipe_column = str(ElectrodeColumns.RECIPE)
-        if recipe and recipe_column in df.columns:
-            mask &= df[recipe_column].map(self._recipe_text) == recipe
+        if recipes and recipe_column in df.columns:
+            mask &= df[recipe_column].map(self._recipe_text).isin(set(recipes))
+
+        low, high = self.filter_bar.number_bounds()
+        marking_column = str(ElectrodeColumns.MARKING)
+        if (low is not None or high is not None) and marking_column in df.columns:
+            # By the number inside the marking, not by the text: as text B9
+            # sorts after B14144, so a typed range would cut in the wrong place.
+            numbers = pd.to_numeric(
+                df[marking_column].map(electrode_number), errors="coerce")
+            within = numbers.notna()
+            if low is not None:
+                within &= numbers >= low
+            if high is not None:
+                within &= numbers <= high
+            mask &= within
 
         start, end = self.filter_bar.date_bounds()
         if (start or end) and self._source_dates is not None:
@@ -586,7 +780,10 @@ class ElectrodesWidget(QWidget):
             self.table.load_data(display_df, cell_style_callback=self._cell_style)
         except Exception as e:
             print(f"Error loading electrodes table: {e}")
+        self._place_status_delegate()
+        self._place_vat_delegate()
         self._sync_picked_row()
+        self._sync_ongoing_timer()
 
     # ------------------------------------------------------------------
     # Row styling
@@ -649,21 +846,83 @@ class ElectrodesWidget(QWidget):
                 format_timestamp_for_display).values,
         }))
 
-    def _update_status_chart(self) -> None:
-        """Feed the donut the status split of the rows currently shown.
+    def statuses_in_scope(self) -> list[str]:
+        """The stored statuses the report and the chart should cover.
 
-        Every status is listed even at zero, so filtering one out reads as
-        "none of these" rather than the category silently vanishing.
+        Whatever the Status filter asks for, or all of them when it asks for
+        nothing. A status nobody ticked is not a zero worth printing: it was
+        excluded on purpose, and a row of zeros reads as a finding.
         """
-        counts = {status_label(status): 0 for status in ElectrodeStatus}
+        chosen = [status_value(label) for label in self.filter_bar.values(FILTER_STATUS)]
+        known = [str(status) for status in ElectrodeStatus]
+        return [status for status in known if status in chosen] if chosen else known
+
+    def _status_split(self) -> tuple[dict[str, int], dict[str, str]]:
+        """``(counts, colours)`` for the rows currently shown.
+
+        A status that is in scope is listed even at zero, so an empty category
+        reads as "none of these" rather than silently vanishing. Shared by the
+        donut and the report, so the ring on paper is the ring on screen.
+        """
+        counts = {status_label(status): 0 for status in self.statuses_in_scope()}
         if self.df_visible is not None and STATUS_COLUMN in self.df_visible.columns:
             for status, count in self.df_visible[STATUS_COLUMN].astype(str).str.strip(
             ).value_counts().items():
                 label = status_label(status)
                 if label in counts:
                     counts[label] = int(count)
-        self.status_chart.update_data(
-            counts, {status_label(s): c for s, c in ROW_ACCENTS.items()})
+        return counts, {status_label(s): c for s, c in ROW_ACCENTS.items()}
+
+    def _build_zoom_widget(self) -> QWidget:
+        """Minus, the current scale, plus, as one widget for the filter bar."""
+        self.zoom_out_button = QPushButton("\u2212")     # a real minus sign
+        self.zoom_out_button.setToolTip("Smaller")
+        self.zoom_in_button = QPushButton("+")
+        self.zoom_in_button.setToolTip("Bigger")
+        self.zoom_label = QLabel()
+        self.zoom_label.setStyleSheet(ZOOM_LABEL_STYLE)
+        self.zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        for button, step in ((self.zoom_out_button, -DataTableWidget.ZOOM_STEP),
+                             (self.zoom_in_button, DataTableWidget.ZOOM_STEP)):
+            button.setStyleSheet(ZOOM_BUTTON_STYLE)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _c, s=step: self._step_zoom(s))
+
+        strip = QHBoxLayout()
+        strip.setContentsMargins(0, 0, 0, 0)
+        strip.setSpacing(6)
+        strip.addWidget(self.zoom_out_button, 0)
+        strip.addWidget(self.zoom_label, 0)
+        strip.addWidget(self.zoom_in_button, 0)
+        holder = QWidget()
+        holder.setLayout(strip)
+        self._sync_zoom_label()
+        return holder
+
+    def _step_zoom(self, step: float) -> None:
+        """One step in or out, then say where we ended up."""
+        if self.table is None:
+            return
+        self.table.set_zoom(self.table.zoom() + step)
+        self._sync_zoom_label()
+
+    def _sync_zoom_label(self) -> None:
+        """The percentage, and the buttons greyed at either end.
+
+        Reads 100% before the table is built: the zoom goes into the filter bar,
+        which is assembled first, so waiting for the table left the label blank
+        until somebody pressed a button.
+        """
+        table = getattr(self, "table", None)
+        scale = table.zoom() if table is not None else 1.0
+        self.zoom_label.setText(f"{round(scale * 100)}%")
+        self.zoom_out_button.setEnabled(scale > DataTableWidget.ZOOM_MIN)
+        self.zoom_in_button.setEnabled(scale < DataTableWidget.ZOOM_MAX)
+
+    def _update_status_chart(self) -> None:
+        """Feed the donut the status split of the rows currently shown."""
+        self.status_chart.update_data(*self._status_split())
 
     def _status_at(self, row_index: int) -> str | None:
         """The status of a rendered row."""
@@ -684,8 +943,12 @@ class ElectrodesWidget(QWidget):
     # ------------------------------------------------------------------
     # Misc
     # ------------------------------------------------------------------
-    def patch_statuses(self, dataframe: pd.DataFrame | None) -> None:
+    def patch_statuses(self, dataframe: pd.DataFrame | None,
+                       flash: bool = False) -> None:
         """Adopt a freshly processed frame, repainting only the changed rows.
+
+        ``flash`` lights the rows that moved, for a change that came from
+        somebody else rather than from something this operator just did.
 
         A QC-board move changes one electrode's status; reloading would rebuild
         every cell in the table for it. This diffs the Status column and touches
@@ -716,7 +979,7 @@ class ElectrodesWidget(QWidget):
 
         # With a status filter on, the changed rows may no longer belong on
         # screen at all, so it is cheaper to be correct than clever.
-        if self.filter_bar.value(FILTER_STATUS) is not None:
+        if self.filter_bar.values(FILTER_STATUS):
             was_at = self._top_marking()
             self._render()
             self._scroll_to_marking(was_at)
@@ -734,9 +997,157 @@ class ElectrodesWidget(QWidget):
                     self.df_visible.at[row_index, STATUS_COLUMN])
                 self._repaint_row(row_index)
             self.table.viewport().update()
+        if flash:
+            self.flash_markings(moved)
+        self._sync_ongoing_timer()
 
         self._update_status_chart()
         self._update_test_first_table()
+
+    def _animated_status(self, label: str) -> str:
+        """The badge's text this instant: Test ongoing grows its dots.
+
+        Resolved by the delegate on every paint rather than written into the
+        cell, which is set once when the table is built.
+        """
+        text = str(label).strip()
+        base = status_label(ElectrodeStatus.TEST_ONGOING)
+        if not text.startswith(base):
+            return label
+        # Any dots already on the text are dropped, not built on. Replacing the
+        # label in place used to keep them, so a cell that somehow arrived
+        # reading "Test ongoing..." animated from three dots to six: the first
+        # three never cleared, and the badge read as stuck rather than moving.
+        # What follows the dots, the test-first suffix, is kept.
+        rest = text[len(base):].lstrip(".")
+        return self._ongoing_text() + rest
+
+    def _place_status_delegate(self) -> None:
+        """Put the badge delegate on whichever column the Status ended up in.
+
+        Not a fixed index: the Vat column is only there when the process log
+        could be read, so the Status column moves. Pinning it meant that on a
+        database with no vats the badges were painted onto a column that was
+        not there, and the statuses came out as plain text.
+        """
+        if self.table is None:
+            return
+        found = self._column_of(COLUMN_DISPLAY_NAMES[STATUS_COLUMN])
+        if found == self._status_column:
+            return
+        if self._status_column is not None:
+            self.table.setItemDelegateForColumn(self._status_column, None)
+        self._status_column = found
+        if found is not None:
+            self.table.setItemDelegateForColumn(found, self._pill_delegate)
+
+    def _column_of(self, header: str) -> int | None:
+        """The column carrying this header, or None when it is not shown."""
+        if self.table is None:
+            return None
+        for column in range(self.table.columnCount()):
+            item = self.table.horizontalHeaderItem(column)
+            if item is not None and item.text() == header:
+                return column
+        return None
+
+    def _place_vat_delegate(self) -> None:
+        """Show the Vat column as loading for as long as it is empty.
+
+        The column is there from the first render, but the process log is read
+        after the window opens, so for a second or two it has nothing in it.
+        """
+        if self.table is None:
+            return
+        found = self._column_of(COLUMN_DISPLAY_NAMES[VAT_COLUMN])
+        waiting = found is not None and not self._any_vat_shown(found)
+        if waiting and not self._shimmer_timer.isActive():
+            self._shimmer_timer.start()
+        elif not waiting and self._shimmer_timer.isActive():
+            self._shimmer_timer.stop()
+
+        if found == self._vat_column:
+            return
+        if self._vat_column is not None:
+            self.table.setItemDelegateForColumn(self._vat_column, None)
+        self._vat_column = found
+        if found is not None:
+            self.table.setItemDelegateForColumn(found, self._loading_delegate)
+
+    def _any_vat_shown(self, column: int) -> bool:
+        """Whether any row in the Vat column has a value yet."""
+        frame = self.df_visible
+        if frame is not None and VAT_COLUMN in frame.columns:
+            return bool(frame[VAT_COLUMN].astype(str).str.strip().any())
+        return any(self.table.item(row, column) is not None
+                   and self.table.item(row, column).text().strip()
+                   for row in range(self.table.rowCount()))
+
+    def _shimmer_strength(self) -> float:
+        """How bright the placeholder is now, or below zero once it is done."""
+        if not self._shimmer_timer.isActive():
+            return -1.0
+        return pulse_strength(self._shimmer_step)
+
+    def _advance_shimmer(self) -> None:
+        self._shimmer_step += 1
+        if self.table is not None:
+            self.table.viewport().update()
+
+    def flash_markings(self, markings) -> None:
+        """Light the rows for these electrodes, wherever they are on screen.
+
+        By marking rather than by row: the frame is rebuilt around the change,
+        so a row index taken before it means nothing afterwards.
+        """
+        if self.table is None or self.df_visible is None or not markings:
+            return
+        column = str(ElectrodeColumns.MARKING)
+        if column not in self.df_visible.columns:
+            return
+        wanted = {str(m).strip() for m in markings}
+        visible = self.df_visible[column].astype(str).str.strip()
+        rows = [index for index, marking in enumerate(visible) if marking in wanted]
+        if not rows:
+            return
+        self._row_highlight.flashing = {row: 1.0 for row in rows}
+        self._flash_timer.start()
+        self.table.viewport().update()
+
+    def _fade_flash(self) -> None:
+        """Step every lit row down, and stop once the last one is out."""
+        step = FLASH_TICK_MS / FLASH_MS
+        faded = {row: strength - step
+                 for row, strength in self._row_highlight.flashing.items()
+                 if strength - step > 0}
+        self._row_highlight.flashing = faded
+        if not faded:
+            self._flash_timer.stop()
+        if self.table is not None:
+            self.table.viewport().update()
+
+    def _advance_ongoing(self) -> None:
+        """Next frame of the dots, and repaint the rows showing them."""
+        self._ongoing_frame = (self._ongoing_frame + 1) % len(ONGOING_DOTS)
+        if self.table is not None:
+            self.table.viewport().update()
+
+    def _ongoing_text(self) -> str:
+        """"Test ongoing" with this frame's dots after it."""
+        return (status_label(ElectrodeStatus.TEST_ONGOING)
+                + ONGOING_DOTS[self._ongoing_frame])
+
+    def _sync_ongoing_timer(self) -> None:
+        """Run the animation only when something on screen is being tested."""
+        showing = (self.df_visible is not None
+                   and STATUS_COLUMN in self.df_visible.columns
+                   and (self.df_visible[STATUS_COLUMN].astype(str).str.strip()
+                        == str(ElectrodeStatus.TEST_ONGOING)).any())
+        if showing and not self._ongoing_timer.isActive():
+            self._ongoing_timer.start()
+        elif not showing and self._ongoing_timer.isActive():
+            self._ongoing_timer.stop()
+            self._ongoing_frame = 0
 
     def _status_display(self, row_index: int) -> str:
         """The Status cell's text: the status, plus the test-first suffix.
@@ -836,32 +1247,127 @@ class ElectrodesWidget(QWidget):
         scrapped_untested = count(ElectrodeStatus.SCRAPPED)
         tested_passed = count(ElectrodeStatus.TESTED_AND_RELEASED)
         tested_failed = count(ElectrodeStatus.TESTED_AND_SCRAPPED)
+        needs_testing = count(ElectrodeStatus.NEEDS_TESTING)
+        test_ongoing = count(ElectrodeStatus.TEST_ONGOING)
+        not_tested = count(ElectrodeStatus.NOT_TESTED)
+        consumed = tested_passed + tested_failed
 
-        totals = {
-            ALL_PRODUCED: len(visible),
-            status_label(ElectrodeStatus.RELEASED): count(ElectrodeStatus.RELEASED),
-            status_label(ElectrodeStatus.TESTED_AND_RELEASED): tested_passed,
-            SCRAP_WITHOUT_QC: scrapped_untested,
-            SCRAP_WITH_QC: scrapped_untested + tested_passed + tested_failed,
-            status_label(ElectrodeStatus.NEEDS_TESTING):
-                count(ElectrodeStatus.NEEDS_TESTING),
-            status_label(ElectrodeStatus.NOT_TESTED): count(ElectrodeStatus.NOT_TESTED),
-        }
+        # ``(label, count, depth)``. Depth 0 is the line the rest are measured
+        # against, 1 a row of the block, 2 a breakdown of the row above it.
+        # A tested electrode is scrapped whatever the verdict: testing destroys
+        # it, so it can never be sold.
+        # A row belongs in the report when at least one status feeding it is in
+        # scope. The composite rows name every status they add up, so filtering
+        # to Released alone leaves a block that still balances.
+        scope = set(self.statuses_in_scope())
+        scrap_statuses = {str(ElectrodeStatus.SCRAPPED),
+                          str(ElectrodeStatus.TESTED_AND_RELEASED),
+                          str(ElectrodeStatus.TESTED_AND_SCRAPPED)}
+        tested_statuses = {str(ElectrodeStatus.TESTED_AND_RELEASED),
+                           str(ElectrodeStatus.TESTED_AND_SCRAPPED)}
+
+        def wanted(rows: list) -> list:
+            return [(label, number, depth) for label, number, depth, feeds in rows
+                    if not feeds or (feeds & scope)]
+
+        production = wanted([
+            (ALL_PRODUCED, len(visible), 0, set()),
+            (status_label(ElectrodeStatus.RELEASED),
+             count(ElectrodeStatus.RELEASED), 1, {str(ElectrodeStatus.RELEASED)}),
+            (SCRAPPED_TOTAL, scrapped_untested + consumed, 1, scrap_statuses),
+            (SCRAP_FAULTS, scrapped_untested + tested_failed, 2,
+             {str(ElectrodeStatus.SCRAPPED), str(ElectrodeStatus.TESTED_AND_SCRAPPED)}),
+            (SCRAP_TESTING, tested_passed, 2,
+             {str(ElectrodeStatus.TESTED_AND_RELEASED)}),
+            (status_label(ElectrodeStatus.TEST_ONGOING), test_ongoing, 1,
+             {str(ElectrodeStatus.TEST_ONGOING)}),
+            (status_label(ElectrodeStatus.NEEDS_TESTING), needs_testing, 1,
+             {str(ElectrodeStatus.NEEDS_TESTING)}),
+            (status_label(ElectrodeStatus.NOT_TESTED), not_tested, 1,
+             {str(ElectrodeStatus.NOT_TESTED)}),
+        ])
+        # What QC itself did. Needs testing and Not Tested are deliberately not
+        # repeated here: they are in the production block, where they are what
+        # makes it add up, and the same two numbers twice on one page read as a
+        # mistake rather than as two views of the same thing.
+        qc = wanted([
+            (status_label(ElectrodeStatus.TESTED_AND_RELEASED), tested_passed, 1,
+             {str(ElectrodeStatus.TESTED_AND_RELEASED)}),
+            (status_label(ElectrodeStatus.TESTED_AND_SCRAPPED), tested_failed, 1,
+             {str(ElectrodeStatus.TESTED_AND_SCRAPPED)}),
+            (ALL_TESTED, consumed, 0, tested_statuses),
+        ])
+
+        # The same split the donut on screen is showing, so the two agree, and
+        # it already honours the Status filter.
+        chart_counts, chart_colors = self._status_split()
+
+        # Rendered once: the builder needs it to work out how far down the
+        # page the glossary goes, and the dialog needs it to draw.
+        chart_png = render_donut_png(chart_counts, chart_colors,
+                                     unit_label="electrodes")
 
         date_from, date_to = self._visible_date_span()
         html = build_report_html(
-            ranges=ranges, totals=totals,
+            ranges=ranges, production=production, qc=qc, qc_total=consumed,
             tints={**{status_label(s): c for s, c in ROW_TINTS.items()},
                    ALL_PRODUCED: "#E9ECEF",
-                   SCRAP_WITHOUT_QC: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
-                   SCRAP_WITH_QC: ROW_TINTS[str(ElectrodeStatus.TESTED_AND_SCRAPPED)]},
+                   SCRAPPED_TOTAL: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
+                   SCRAP_FAULTS: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
+                   SCRAP_TESTING: ROW_TINTS[str(ElectrodeStatus.TESTED_AND_RELEASED)],
+                   ALL_TESTED: "#E9ECEF"},
+            filters=self.filter_bar.active(),
             date_from=date_from, date_to=date_to,
             total_shown=len(visible),
-            total_all=0 if self.df_source is None else len(self.df_source))
+            total_all=0 if self.df_source is None else len(self.df_source),
+            chart_counts=chart_counts, chart_colors=chart_colors,
+            definitions=self._report_definitions(), chart_png=chart_png)
 
-        ReportDialog(self, html=html,
+        ReportDialog(self, html=html, chart_png=chart_png,
                      suggested_name=f"qc_report_{date_from}_{date_to}.pdf"
                      .replace(".", "-").replace("-pdf", ".pdf")).exec()
+
+    @staticmethod
+    def _status_definitions() -> list[tuple[str, str]]:
+        """What each status means, in the order the chart lists them.
+
+        Built from the same labels everything else uses, so renaming a status
+        renames it here too. Shared by the chart's info icon and the report.
+        """
+        return [
+            (status_label(ElectrodeStatus.TESTED_AND_RELEASED),
+             "Electrode that was tested and passed the tests."),
+            (status_label(ElectrodeStatus.RELEASED),
+             "Presumably good electrode, can be sold."),
+            (status_label(ElectrodeStatus.TESTED_AND_SCRAPPED),
+             "Electrode that was tested and failed the tests."),
+            (status_label(ElectrodeStatus.SCRAPPED),
+             "Presumably bad electrode, should not be sold."),
+            (status_label(ElectrodeStatus.NEEDS_TESTING),
+             "A neighbouring electrode failed the tests, so this one should be "
+             "tested too."),
+            (status_label(ElectrodeStatus.NOT_TESTED),
+             "A new electrode that has not been tested yet."),
+            (status_label(ElectrodeStatus.TEST_ONGOING),
+             "An electrode on the QC board now, waiting for its result."),
+        ]
+
+    def _report_definitions(self) -> list[tuple[str, str]]:
+        """Every term the report prints: the statuses, plus its summary lines.
+
+        Scrapped and Rejected are the pair worth reading together: one is a
+        single electrode nobody tested, the other is the whole of what cannot
+        be sold.
+        """
+        return self._status_definitions() + [
+            (ALL_PRODUCED, "Number of electrodes matching the filters."),
+            (SCRAPPED_TOTAL, "Everything that cannot be sold."),
+            (SCRAP_FAULTS,
+             "Electrodes that either failed a test or are presumed to be bad."),
+            (SCRAP_TESTING,
+             "An electrode that passed the test but therefore cannot be sold."),
+            (ALL_TESTED, "Number of electrodes that have been tested."),
+        ]
 
     def _visible_date_span(self) -> tuple[str, str]:
         """First and last production date among the rendered rows."""
@@ -961,9 +1467,13 @@ class ElectrodesWidget(QWidget):
         current = status_label(
             self.df_visible.iloc[self._edit_row][STATUS_COLUMN])
 
+        # Test ongoing is left out: it is read off the QC board on every
+        # render, so a hand set one would be overwritten the moment the card
+        # moved, or linger over an electrode that is not on the board at all.
         dialog = StatusEditDialog(
             self, marking=marking, current=current,
-            statuses=[status_label(s) for s in ElectrodeStatus])
+            statuses=[status_label(s) for s in ElectrodeStatus
+                      if s is not ElectrodeStatus.TEST_ONGOING])
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.chosen:
             return
 
@@ -984,7 +1494,7 @@ class ElectrodesWidget(QWidget):
         if not result or not result.get("has_updates") or result.get("data") is None:
             return False
         was_at = self._top_marking()
-        self.patch_statuses(result["data"])
+        self.patch_statuses(result["data"], flash=True)
         self._scroll_to_marking(was_at)
         return True
 

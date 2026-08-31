@@ -107,7 +107,11 @@ REQUIRED_MIGRATIONS = (
     "007_create_sem_edx_measurement_tables.sql",
 )
 
-KNOWN_STATUSES = {str(s) for s in ElectrodeStatus}
+# Test ongoing is deliberately not one of them: it is read off the QC board at
+# render time and has no row in qc_data.electrode_status_kind, so a range naming
+# it would load right up to a foreign key violation.
+KNOWN_STATUSES = {str(s) for s in ElectrodeStatus
+                  if s is not ElectrodeStatus.TEST_ONGOING}
 
 
 # ---- reading the files ---------------------------------------------------

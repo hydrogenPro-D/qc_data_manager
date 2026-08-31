@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>How an electrode's status is decided</title>
+<style>
+  @page { size: A4; margin: 15mm 14mm 13mm 14mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #1F2933;
+         font-size: 10.2pt; line-height: 1.5; margin: 0; }
+  h1 { font-size: 21pt; margin: 0 0 4px; letter-spacing: -0.3px; }
+  h2 { font-size: 13.5pt; margin: 24px 0 8px; padding-bottom: 5px;
+        border-bottom: 2px solid #14B8A6; break-after: avoid; }
+  h3 { font-size: 11pt; margin: 18px 0 4px; color: #0F766E; break-after: avoid; }
+  p { margin: 6px 0; }
+  .sub { color: #6B7280; font-size: 9.6pt; margin-bottom: 14px; }
+  .fig { width: 100%; height: auto; display: block; margin: 10px 0 14px;
+          break-inside: avoid; }
+  svg text { font-family: "Segoe UI", Arial, sans-serif; }
+  .mk { font-size: 12px; font-weight: 600; fill: #1F2933; }
+  .mkc { font-size: 12px; font-weight: 600; fill: #1F2933; text-anchor: middle; }
+  .vat { font-size: 10px; fill: #6B7280; }
+  .st { font-size: 12.5px; font-weight: 600; }
+  .fl { font-size: 9px; font-weight: 700; text-anchor: middle;
+         text-transform: uppercase; letter-spacing: 0.4px; }
+  .nt { font-size: 11px; fill: #6B7280; }
+  .nt.strong { fill: #1F2933; font-weight: 700; }
+  .bd { font-size: 10.5px; }
+  .ax { font-size: 10.5px; fill: #6B7280; font-weight: 700;
+         text-transform: uppercase; letter-spacing: 0.6px; }
+  .cap { font-size: 11px; fill: #6B7280; }
+  .hd { font-size: 12.5px; font-weight: 700; }
+  .end { text-anchor: end; }
+  .card { background: #F7FAFA; border: 1px solid #D6E4E3;
+           border-left: 4px solid #14B8A6; border-radius: 8px; padding: 8px 14px;
+           margin: 12px 0; break-inside: avoid; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+  .chip { border: 1.4px solid; border-radius: 20px; padding: 3px 12px;
+           font-size: 9.4pt; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 12px;
+           font-size: 9.8pt; break-inside: avoid; }
+  th, td { text-align: left; padding: 6px 9px; border-bottom: 1px solid #E4E7EB;
+            vertical-align: top; }
+  th { background: #F0FAF9; color: #0F766E; font-size: 8.8pt;
+        text-transform: uppercase; letter-spacing: 0.5px; }
+  .page { break-before: page; }
+  .note { font-size: 9.2pt; color: #6B7280; border-top: 1px solid #E4E7EB;
+           padding-top: 8px; margin-top: 22px; }
+</style></head><body>
+
+<h1>How an electrode's status is decided</h1>
+<div class="sub">Testing one electrode says something about its neighbours.
+QC Data Manager, the complete set of propagation rules.</div>
+
+<div class="legend"><span class="chip" style="background:#DCFCE7;border-color:#15803D;color:#15803D">Tested, passed</span><span class="chip" style="background:#FEE2E2;border-color:#B91C1C;color:#B91C1C">Tested, failed</span><span class="chip" style="background:#E3F5E8;border-color:#5FA87B;color:#166534">Rejected</span><span class="chip" style="background:#FDECE2;border-color:#F0A981;color:#9A3412">Scrapped</span><span class="chip" style="background:#FEF3C7;border-color:#E3B341;color:#92400E">Needs testing</span><span class="chip" style="background:#F3F4F6;border-color:#D8DCE1;color:#6B7280">Not Tested</span><span class="chip" style="background:#D7F5F1;border-color:#14B8A6;color:#0F766E">Test ongoing</span></div>
+
+<div class="card">
+<p><b>1. Everything travels along the vat, not along the line.</b> Electrodes are
+plated in vats (28, 29, 30) and the line alternates between them, so B14466 and
+B14464 are neighbours <i>in vat 28</i> while B14465 sits between them on the line
+in a different vat. A fault is the vat's doing, so it spreads to the electrodes
+that vat made, and skips over everything else.</p>
+<p><b>2. A measurement always beats a guess.</b> Only two statuses are
+measurements: Tested passed and Tested failed. Somebody put those electrodes on a
+rig. Everything else is inferred from them, and an inference can always be
+replaced by a better one.</p>
+</div>
+
+<svg class="fig" viewBox="0 0 700 236" xmlns="http://www.w3.org/2000/svg"><text x="0" y="16" class="ax">the production line, in order</text><rect x="44.0" y="34.0" width="80.0" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DA" stroke-width="1.0"/><text x="84.0" y="53.0" class="mkc">B14462</text><path d="M 84.0 64.0 V 111.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="84.0" cy="122.0" r="9" fill="#F0A981" stroke="#FFFFFF" stroke-width="1.5"/><rect x="136.0" y="34.0" width="80.0" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DA" stroke-width="1.0"/><text x="176.0" y="53.0" class="mkc">B14463</text><path d="M 176.0 64.0 V 167.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="176.0" cy="178.0" r="9" fill="#E3E7EB" stroke="#FFFFFF" stroke-width="1.5"/><rect x="228.0" y="34.0" width="80.0" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DA" stroke-width="1.0"/><text x="268.0" y="53.0" class="mkc">B14464</text><path d="M 268.0 64.0 V 111.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="268.0" cy="122.0" r="9" fill="#F0A981" stroke="#FFFFFF" stroke-width="1.5"/><rect x="320.0" y="34.0" width="80.0" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DA" stroke-width="1.0"/><text x="360.0" y="53.0" class="mkc">B14465</text><path d="M 360.0 64.0 V 167.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="360.0" cy="178.0" r="9" fill="#E3E7EB" stroke="#FFFFFF" stroke-width="1.5"/><rect x="412.0" y="34.0" width="80.0" height="28" rx="7" fill="#FEE2E2" stroke="#B91C1C" stroke-width="2.0"/><text x="452.0" y="53.0" class="mkc">B14466</text><path d="M 452.0 64.0 V 111.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="452.0" cy="122.0" r="9" fill="#B91C1C" stroke="#B91C1C" stroke-width="1.5"/><rect x="504.0" y="34.0" width="80.0" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DA" stroke-width="1.0"/><text x="544.0" y="53.0" class="mkc">B14467</text><path d="M 544.0 64.0 V 167.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="544.0" cy="178.0" r="9" fill="#E3E7EB" stroke="#FFFFFF" stroke-width="1.5"/><rect x="596.0" y="34.0" width="80.0" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DA" stroke-width="1.0"/><text x="636.0" y="53.0" class="mkc">B14468</text><path d="M 636.0 64.0 V 111.0" stroke="#9AA5B1" stroke-width="1" stroke-dasharray="3 3"/><circle cx="636.0" cy="122.0" r="9" fill="#F0A981" stroke="#FFFFFF" stroke-width="1.5"/><path d="M 30 122.0 H 672" stroke="#CBD3DA" stroke-width="1.2"/><text x="0" y="107.0" class="ax">vat 28</text><path d="M 30 178.0 H 672" stroke="#CBD3DA" stroke-width="1.2"/><text x="0" y="163.0" class="ax">vat 30</text><text x="30" y="214.0" class="cap">B14466 fails. The doubt travels along the vat 28 lane only, so B14464 and B14468 are</text><text x="30" y="229.0" class="cap">scrapped while B14465 and B14467, its neighbours on the line, are left alone.</text></svg>
+
+<h2>The six statuses</h2>
+<table>
+<tr><th>Status</th><th>Meaning</th><th>Measured?</th></tr>
+<tr><td><b>Tested, passed</b></td><td>put on a rig, it was good</td><td>yes</td></tr>
+<tr><td><b>Tested, failed</b></td><td>put on a rig, it was bad</td><td>yes</td></tr>
+<tr><td><b>Rejected</b></td><td>presumed good, because of a pass nearby</td>
+<td>no, a guess</td></tr>
+<tr><td><b>Scrapped</b></td><td>presumed bad, because of a fault nearby</td>
+<td>no, a guess</td></tr>
+<tr><td><b>Needs testing</b></td><td>in doubt, somebody should test it</td>
+<td>no, a request</td></tr>
+<tr><td><b>Not Tested</b></td><td>nothing is known about it</td><td>no</td></tr>
+</table>
+<p>Plus one that is never stored: <b>Test ongoing</b>, which means the electrode
+is on the QC board right now. It is worked out fresh every time the screen is
+drawn.</p>
+
+<div class="page"></div>
+<h2>Scenario 1: you set an electrode to Tested, passed</h2>
+<p>A pass does two different things in the two directions, and they are not
+symmetric. <b>Behind it, it rejects. Ahead of it, it only clears doubt.</b></p>
+
+<svg class="fig" viewBox="0 0 700 172" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ar-green" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#166534"/></marker><marker id="ar-amber" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#92400E"/></marker></defs><rect x="252" y="62" width="196" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="2"/><text x="350" y="84" class="mkc" fill="#15803D">Tested, passed</text><path d="M 246 79 H 40" stroke="#166534" stroke-width="2" marker-end="url(#ar-green)"/><path d="M 454 79 H 660" stroke="#92400E" stroke-width="2" marker-end="url(#ar-amber)"/><text x="40" y="40" class="hd" fill="#166534">behind it, it rejects</text><text x="40" y="122.0" class="cap">the vat was plating properly right up to</text><text x="40" y="137.0" class="cap">here, so everything untested behind it</text><text x="40" y="152.0" class="cap">becomes Rejected</text><text x="660" y="40" class="hd end" fill="#92400E">ahead of it, it only clears doubt</text><text x="660" y="122" class="cap end">a test at 09:00 says nothing about what</text><text x="660" y="137" class="cap end">the vat did at 11:00, so doubt is lifted</text><text x="660" y="152" class="cap end">but nothing is vouched for</text></svg>
+
+<h3>1a. Behind it, nothing in the way</h3>
+<p>Everything untested behind it in the same vat becomes Rejected, back until it
+meets an electrode that already has a status.</p>
+<svg class="fig" viewBox="0 0 700 181" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14426</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#6B7280">Not Tested</text><text x="0.0" y="55.0" class="mk">B14425</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#DCFCE7" stroke="#15803D" stroke-width="2.2"/><text x="86.0" y="55.0" class="st" fill="#15803D">Tested, passed</text><path d="M 332.0 50.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="55.0" class="nt strong">you set this</text><text x="0.0" y="90.0" class="mk">B14424</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#E3F5E8" stroke="#5FA87B" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#166534">Rejected</text><text x="0.0" y="125.0" class="mk">B14423</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#E3F5E8" stroke="#5FA87B" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#166534">Rejected</text><text x="0.0" y="160.0" class="mk">B14422</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#E3F5E8" stroke="#5FA87B" stroke-width="1.0"/><text x="86.0" y="160.0" class="st" fill="#166534">Rejected</text><text x="338.0" y="160.0" class="nt">and so on backwards</text><path d="M 528.0 70.0 h -8 V 170.0 h 8" fill="none" stroke="#166534" stroke-width="1.6"/><path d="M 520.0 120.0 h 12" stroke="#166534" stroke-width="1.6"/><text x="540.0" y="111.0" class="bd" fill="#166534">back until it meets</text><text x="540.0" y="124.0" class="bd" fill="#166534">an electrode that</text><text x="540.0" y="137.0" class="bd" fill="#166534">already has a status</text></svg>
+
+<h3>1b. Behind it, with a fault in the way</h3>
+<p><b>Nothing is rejected.</b> The stretch between the fault and the test stays in
+doubt and is flagged for testing instead. We now know production had recovered
+<i>by</i> B14425, but not <i>where</i> it recovered, so every electrode in between
+could be on either side of that line.</p>
+<svg class="fig" viewBox="0 0 700 251" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14425</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#DCFCE7" stroke="#15803D" stroke-width="2.2"/><text x="86.0" y="20.0" class="st" fill="#15803D">Tested, passed</text><path d="M 332.0 15.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="20.0" class="nt strong">you set this</text><text x="0.0" y="55.0" class="mk">B14424</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="90.0" class="mk">B14423</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="125.0" class="mk">B14422</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#92400E">Needs testing</text><rect x="248.0" y="111.0" width="66" height="18" rx="9" fill="#FFFFFF" stroke="#92400E" stroke-width="0.9"/><text x="281.0" y="124.0" class="fl" fill="#92400E">test first</text><text x="0.0" y="160.0" class="mk">B14421</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="160.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="195.0" class="mk">B14420</text><rect x="74.0" y="175.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="195.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="230.0" class="mk">B14419</text><rect x="74.0" y="210.0" width="250.0" height="30.0" rx="7" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.0"/><text x="86.0" y="230.0" class="st" fill="#B91C1C">Tested, failed</text><path d="M 528.0 35.0 h -8 V 135.0 h 8" fill="none" stroke="#92400E" stroke-width="1.6"/><path d="M 520.0 85.0 h 12" stroke="#92400E" stroke-width="1.6"/><text x="540.0" y="76.0" class="bd" fill="#92400E">it recovered by B14425,</text><text x="540.0" y="89.0" class="bd" fill="#92400E">but nobody knows where,</text><text x="540.0" y="102.0" class="bd" fill="#92400E">so each one is a real question</text></svg>
+
+<div class="page"></div>
+<h3>1c. Ahead of it, no fault ahead</h3>
+<p>Electrodes ahead that were flagged Needs testing go back to Not Tested. They
+were doubted because of a fault the pass now stands between, so that doubt can no
+longer reach them. They do <b>not</b> become Rejected: they were plated after the
+test was done, so nothing here vouches for them.</p>
+<svg class="fig" viewBox="0 0 700 181" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14428</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#6B7280">Not Tested</text><text x="338.0" y="20.0" class="nt">was needs testing</text><text x="0.0" y="55.0" class="mk">B14427</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#6B7280">Not Tested</text><text x="338.0" y="55.0" class="nt">was needs testing</text><text x="0.0" y="90.0" class="mk">B14426</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#6B7280">Not Tested</text><text x="338.0" y="90.0" class="nt">was needs testing</text><text x="0.0" y="125.0" class="mk">B14425</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#DCFCE7" stroke="#15803D" stroke-width="2.2"/><text x="86.0" y="125.0" class="st" fill="#15803D">Tested, passed</text><path d="M 332.0 120.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="125.0" class="nt strong">you set this</text><text x="0.0" y="160.0" class="mk">B14424</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#E3F5E8" stroke="#5FA87B" stroke-width="1.0"/><text x="86.0" y="160.0" class="st" fill="#166534">Rejected</text><path d="M 528.0 0.0 h -8 V 100.0 h 8" fill="none" stroke="#52606D" stroke-width="1.6"/><path d="M 520.0 50.0 h 12" stroke="#52606D" stroke-width="1.6"/><text x="540.0" y="47.5" class="bd" fill="#52606D">doubt cleared,</text><text x="540.0" y="60.5" class="bd" fill="#52606D">not vouched for</text></svg>
+
+<h3>1d. Ahead of it, with a fault ahead</h3>
+<p>Nothing ahead is cleared. Those electrodes are in doubt because of the
+<i>later</i> fault, and that doubt is real.</p>
+<svg class="fig" viewBox="0 0 700 461" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14436</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#92400E">Needs testing</text><rect x="248.0" y="6.0" width="66" height="18" rx="9" fill="#FFFFFF" stroke="#92400E" stroke-width="0.9"/><text x="281.0" y="19.0" class="fl" fill="#92400E">test first</text><text x="0.0" y="55.0" class="mk">B14435</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="90.0" class="mk">B14434</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="125.0" class="mk">B14433</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#B91C1C">Tested, failed</text><text x="338.0" y="125.0" class="nt">a fault ahead</text><text x="0.0" y="160.0" class="mk">B14432</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="160.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="195.0" class="mk">B14431</text><rect x="74.0" y="175.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="195.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="230.0" class="mk">B14430</text><rect x="74.0" y="210.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="230.0" class="st" fill="#92400E">Needs testing</text><rect x="248.0" y="216.0" width="66" height="18" rx="9" fill="#FFFFFF" stroke="#92400E" stroke-width="0.9"/><text x="281.0" y="229.0" class="fl" fill="#92400E">test first</text><text x="0.0" y="265.0" class="mk">B14429</text><rect x="74.0" y="245.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="265.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="300.0" class="mk">B14428</text><rect x="74.0" y="280.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="300.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="335.0" class="mk">B14427</text><rect x="74.0" y="315.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="335.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="370.0" class="mk">B14426</text><rect x="74.0" y="350.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="370.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="405.0" class="mk">B14425</text><rect x="74.0" y="385.0" width="250.0" height="30.0" rx="7" fill="#DCFCE7" stroke="#15803D" stroke-width="2.2"/><text x="86.0" y="405.0" class="st" fill="#15803D">Tested, passed</text><path d="M 332.0 400.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="405.0" class="nt strong">you set this</text><text x="0.0" y="440.0" class="mk">B14424</text><rect x="74.0" y="420.0" width="250.0" height="30.0" rx="7" fill="#E3F5E8" stroke="#5FA87B" stroke-width="1.0"/><text x="86.0" y="440.0" class="st" fill="#166534">Rejected</text><path d="M 528.0 210.0 h -8 V 380.0 h 8" fill="none" stroke="#92400E" stroke-width="1.6"/><path d="M 520.0 295.0 h 12" stroke="#92400E" stroke-width="1.6"/><text x="540.0" y="286.0" class="bd" fill="#92400E">nothing here is cleared:</text><text x="540.0" y="299.0" class="bd" fill="#92400E">the later fault has a</text><text x="540.0" y="312.0" class="bd" fill="#92400E">real claim on them</text></svg>
+
+<div class="page"></div>
+<h2>Scenario 2: you set an electrode to Tested, failed</h2>
+<p>A fault spreads <b>both ways equally</b>, along its own vat. The two either
+side are scrapped with it. The third each way is flagged Needs testing and marked
+<b>test first</b>, because those are where the fault most likely started and
+stopped, so they are the ones worth testing next. Beyond that it keeps marking
+Needs testing outward until it reaches an electrode that was tested and passed.</p>
+<svg class="fig" viewBox="0 0 700 391" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14430</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="55.0" class="mk">B14429</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="90.0" class="mk">B14428</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#92400E">Needs testing</text><rect x="248.0" y="76.0" width="66" height="18" rx="9" fill="#FFFFFF" stroke="#92400E" stroke-width="0.9"/><text x="281.0" y="89.0" class="fl" fill="#92400E">test first</text><text x="338.0" y="90.0" class="nt">third above</text><text x="0.0" y="125.0" class="mk">B14427</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="160.0" class="mk">B14426</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="160.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="195.0" class="mk">B14425</text><rect x="74.0" y="175.0" width="250.0" height="30.0" rx="7" fill="#FEE2E2" stroke="#B91C1C" stroke-width="2.2"/><text x="86.0" y="195.0" class="st" fill="#B91C1C">Tested, failed</text><path d="M 332.0 190.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="195.0" class="nt strong">you set this</text><text x="0.0" y="230.0" class="mk">B14424</text><rect x="74.0" y="210.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="230.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="265.0" class="mk">B14423</text><rect x="74.0" y="245.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="265.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="300.0" class="mk">B14422</text><rect x="74.0" y="280.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="300.0" class="st" fill="#92400E">Needs testing</text><rect x="248.0" y="286.0" width="66" height="18" rx="9" fill="#FFFFFF" stroke="#92400E" stroke-width="0.9"/><text x="281.0" y="299.0" class="fl" fill="#92400E">test first</text><text x="338.0" y="300.0" class="nt">third below</text><text x="0.0" y="335.0" class="mk">B14421</text><rect x="74.0" y="315.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="335.0" class="st" fill="#92400E">Needs testing</text><text x="0.0" y="370.0" class="mk">B14420</text><rect x="74.0" y="350.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="370.0" class="st" fill="#92400E">Needs testing</text><path d="M 528.0 0.0 h -8 V 65.0 h 8" fill="none" stroke="#92400E" stroke-width="1.6"/><path d="M 520.0 32.5 h 12" stroke="#92400E" stroke-width="1.6"/><text x="540.0" y="36.5" class="bd" fill="#92400E">outward until a pass</text><path d="M 528.0 105.0 h -8 V 275.0 h 8" fill="none" stroke="#9A3412" stroke-width="1.6"/><path d="M 520.0 190.0 h 12" stroke="#9A3412" stroke-width="1.6"/><text x="540.0" y="187.5" class="bd" fill="#9A3412">the two either side</text><text x="540.0" y="200.5" class="bd" fill="#9A3412">are scrapped with it</text><path d="M 528.0 315.0 h -8 V 380.0 h 8" fill="none" stroke="#92400E" stroke-width="1.6"/><path d="M 520.0 347.5 h 12" stroke="#92400E" stroke-width="1.6"/><text x="540.0" y="351.5" class="bd" fill="#92400E">outward until a pass</text></svg>
+
+<h3>2a. A pass stops it</h3>
+<p>The doubt cannot travel through an electrode somebody tested and passed.</p>
+<svg class="fig" viewBox="0 0 700 181" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14429</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#6B7280">Not Tested</text><text x="338.0" y="20.0" class="nt">the doubt never gets here</text><text x="0.0" y="55.0" class="mk">B14428</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#DCFCE7" stroke="#15803D" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#15803D">Tested, passed</text><text x="338.0" y="55.0" class="nt">a wall</text><text x="0.0" y="90.0" class="mk">B14427</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="125.0" class="mk">B14426</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="160.0" class="mk">B14425</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#FEE2E2" stroke="#B91C1C" stroke-width="2.2"/><text x="86.0" y="160.0" class="st" fill="#B91C1C">Tested, failed</text><path d="M 332.0 155.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="160.0" class="nt strong">you set this</text></svg>
+
+<div class="page"></div>
+<h3>2b. Other vats are untouched</h3>
+<p>The line alternates between vats. Only vat 28 is affected here. The same is
+true of a pass: it rejects along its own vat and leaves the others alone.</p>
+<svg class="fig" viewBox="0 0 700 321" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14470</text><text x="47" y="20.0" class="vat">vat 28</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="55.0" class="mk">B14469</text><text x="47" y="55.0" class="vat">vat 30</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#6B7280">Not Tested</text><text x="0.0" y="90.0" class="mk">B14468</text><text x="47" y="90.0" class="vat">vat 28</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="125.0" class="mk">B14467</text><text x="47" y="125.0" class="vat">vat 30</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#6B7280">Not Tested</text><text x="0.0" y="160.0" class="mk">B14466</text><text x="47" y="160.0" class="vat">vat 28</text><rect x="74.0" y="140.0" width="250.0" height="30.0" rx="7" fill="#FEE2E2" stroke="#B91C1C" stroke-width="2.2"/><text x="86.0" y="160.0" class="st" fill="#B91C1C">Tested, failed</text><path d="M 332.0 155.0 l 11 -6 v 12 z" fill="#1F2933"/><text x="338.0" y="160.0" class="nt strong">you set this</text><text x="0.0" y="195.0" class="mk">B14465</text><text x="47" y="195.0" class="vat">vat 30</text><rect x="74.0" y="175.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="195.0" class="st" fill="#6B7280">Not Tested</text><text x="0.0" y="230.0" class="mk">B14464</text><text x="47" y="230.0" class="vat">vat 28</text><rect x="74.0" y="210.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="230.0" class="st" fill="#9A3412">Scrapped</text><text x="0.0" y="265.0" class="mk">B14463</text><text x="47" y="265.0" class="vat">vat 30</text><rect x="74.0" y="245.0" width="250.0" height="30.0" rx="7" fill="#F3F4F6" stroke="#D8DCE1" stroke-width="1.0"/><text x="86.0" y="265.0" class="st" fill="#6B7280">Not Tested</text><text x="0.0" y="300.0" class="mk">B14462</text><text x="47" y="300.0" class="vat">vat 28</text><rect x="74.0" y="280.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="300.0" class="st" fill="#9A3412">Scrapped</text></svg>
+
+<h2>Scenario 3: you put an electrode on the QC board</h2>
+<p>It reads <b>Test ongoing</b>, whatever it read before. A recorded Scrapped, a
+Rejected, a Needs testing, all of them give way: putting it on the board is the
+statement that its status is being revisited. It also loses any <b>test first</b>
+flag, because somebody is already testing it.</p>
+<svg class="fig" viewBox="0 0 700 146" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14422</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#92400E">Needs testing</text><rect x="248.0" y="6.0" width="66" height="18" rx="9" fill="#FFFFFF" stroke="#92400E" stroke-width="0.9"/><text x="281.0" y="19.0" class="fl" fill="#92400E">test first</text><text x="0.0" y="55.0" class="mk">B14421</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#D7F5F1" stroke="#14B8A6" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#0F766E">Test ongoing</text><text x="338.0" y="55.0" class="nt">was Rejected</text><text x="0.0" y="90.0" class="mk">B14420</text><rect x="74.0" y="70.0" width="250.0" height="30.0" rx="7" fill="#D7F5F1" stroke="#14B8A6" stroke-width="1.0"/><text x="86.0" y="90.0" class="st" fill="#0F766E">Test ongoing</text><text x="338.0" y="90.0" class="nt">was Scrapped</text><text x="0.0" y="125.0" class="mk">B14419</text><rect x="74.0" y="105.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="125.0" class="st" fill="#92400E">Needs testing</text><path d="M 528.0 35.0 h -8 V 100.0 h 8" fill="none" stroke="#14B8A6" stroke-width="1.6"/><path d="M 520.0 67.5 h 12" stroke="#14B8A6" stroke-width="1.6"/><text x="540.0" y="65.0" class="bd" fill="#14B8A6">both cards are on</text><text x="540.0" y="78.0" class="bd" fill="#14B8A6">the board right now</text></svg>
+
+<div class="page"></div>
+<h3>3a. Taking it back off the board</h3>
+<p>Test ongoing is never saved anywhere. Remove the card and the electrode reads
+whatever it <i>would</i> have read if it had never been on the board. Note this is
+not always the status it showed before. B14420 had a verdict of its own, so it
+comes back. B14421 only had a guess, and by the time the card came off, a nearby
+fault had a better claim on it.</p>
+<svg class="fig" viewBox="0 0 700 76" xmlns="http://www.w3.org/2000/svg"><text x="0.0" y="20.0" class="mk">B14421</text><rect x="74.0" y="0.0" width="250.0" height="30.0" rx="7" fill="#FEF3C7" stroke="#E3B341" stroke-width="1.0"/><text x="86.0" y="20.0" class="st" fill="#92400E">Needs testing</text><text x="338.0" y="20.0" class="nt">reopened by the fault above</text><text x="0.0" y="55.0" class="mk">B14420</text><rect x="74.0" y="35.0" width="250.0" height="30.0" rx="7" fill="#FDECE2" stroke="#F0A981" stroke-width="1.0"/><text x="86.0" y="55.0" class="st" fill="#9A3412">Scrapped</text><text x="338.0" y="55.0" class="nt">back to its own verdict</text></svg>
+
+<h2>Scenario 4: you re-test something</h2>
+<p>Setting a new verdict on an electrode that already had one throws away every
+guess the old verdict produced, and re-derives them from the new one. So if
+B14466 failed, condemning its neighbours, and you later re-test it and it passes,
+those neighbours are not left scrapped. They are worked out again.</p>
+<p>This is why the app records, for every guessed status, <b>which</b> verdict it
+came from and <b>when</b>. A guess older than the verdict it names was drawn from
+a version of that verdict that no longer exists, so it is discarded.</p>
+<svg class="fig" viewBox="0 0 700 128" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ar-ink" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#52606D"/></marker></defs><rect x="0" y="16" width="196" height="89" rx="10" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.4"/><text x="14" y="38" class="hd" fill="#B91C1C">B14466 fails</text><text x="14" y="56" class="cap">its neighbours are scrapped,</text><text x="14" y="71" class="cap">each stamped: because of</text><text x="14" y="86" class="cap">B14466, at 09:14</text><path d="M 204 62 H 246" stroke="#52606D" stroke-width="1.6" marker-end="url(#ar-ink)"/><rect x="252" y="16" width="196" height="74" rx="10" fill="#DCFCE7" stroke="#15803D" stroke-width="1.4"/><text x="266" y="38" class="hd" fill="#15803D">you re-test it</text><text x="266" y="56" class="cap">a new verdict, passed,</text><text x="266" y="71" class="cap">stamped 14:02</text><path d="M 456 62 H 498" stroke="#52606D" stroke-width="1.6" marker-end="url(#ar-ink)"/><rect x="504" y="16" width="196" height="89" rx="10" fill="#E3F5E8" stroke="#5FA87B" stroke-width="1.4"/><text x="518" y="38" class="hd" fill="#166534">the old guesses drop</text><text x="518" y="56" class="cap">stamped 09:14, older than</text><text x="518" y="71" class="cap">the verdict they name,</text><text x="518" y="86" class="cap">so they are re-derived</text></svg>
+
+<div class="page"></div>
+<h2>The rules underneath</h2>
+<h3>What a sweep may overwrite</h3>
+<table><tr><th>Status</th><th>Can a sweep change it?</th><th>Because</th></tr>
+<tr><td><b>Not Tested</b></td><td>yes</td><td>nothing is known, so anything is an improvement</td></tr><tr><td><b>Needs testing</b></td><td>yes</td><td>it is a request, not an answer</td></tr><tr><td><b>Rejected</b></td><td>yes</td><td>nobody measured it</td></tr><tr><td><b>Scrapped</b></td><td>no, it keeps it, but the sweep carries on past</td><td>a recorded verdict</td></tr><tr><td><b>Tested, failed</b></td><td>no, and the sweep carries on past</td><td>a measurement</td></tr><tr><td><b>Tested, passed</b></td><td>no, and it stops the sweep dead</td><td>the only wall</td></tr></table>
+<p>A Rejected electrode being overwritten is the surprising one. It matters
+because a Rejected electrode never appears in anybody's work queue. If a fault
+turned up beside it and it kept that status, it would ship without ever being
+looked at.</p>
+
+<h3>Only a real pass is a wall</h3>
+<p>A guess does not bound another guess. Rejected does not stop doubt, only
+Tested passed does. A scrapped electrode does not stop a sweep either, so two
+nearby faults produce one continuous zone rather than two separate ones.</p>
+
+<h3>Distances</h3>
+<table>
+<tr><th>Rule</th><th>Reach</th></tr>
+<tr><td>scrapped either side of a fault</td><td><b>2</b> electrodes</td></tr>
+<tr><td>test first flag</td><td>the <b>3rd</b> each way</td></tr>
+<tr><td>how far Needs testing runs</td><td>until a Tested passed</td></tr>
+</table>
+<p>If the process log does not say which vat an electrode came from, the fault
+falls back to counting along the production line instead, and stops after the
+third. A guess about the line is worth two electrodes, not a whole stretch.</p>
+
+<h2>Why a row is locked</h2>
+<p>A row is locked when a card <b>currently on the QC board</b> is what decides
+its status. Dragging that card somewhere else would change the row, so it cannot
+be pinned by hand at the same time.</p>
+<p>Two things that look similar and are not. <b>Because of</b> names <b>one</b>
+decision, the one recorded against the status. <b>Locked by</b> covers
+<b>every</b> decision that contributed. A status can genuinely have more than one
+cause: a stretch cleared between two passes needs both of them to stay cleared,
+so both lock it. A finalised verdict never locks anything, it cannot be dragged
+anywhere.</p>
+
+<div class="note">Generated from docs/status-propagation.md by
+tools/generate_status_propagation_pdf.py. Written with the planned wording
+Rejected in place of the current Released.</div>
+
+</body></html>

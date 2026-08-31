@@ -47,7 +47,11 @@ RANGES_CSV = PROJECT_ROOT / "data" / "csv" / "electrode_ranges.csv"
 OUTPUT_CSV = PROJECT_ROOT / "data" / "csv" / "electrode_status.csv"
 
 NOT_TESTED = str(ElectrodeStatus.NOT_TESTED)
-KNOWN_STATUSES = {str(s) for s in ElectrodeStatus}
+# Test ongoing is deliberately not one of them: it is read off the QC board at
+# render time and has no row in qc_data.electrode_status_kind, so a range naming
+# it would load right up to a foreign key violation.
+KNOWN_STATUSES = {str(s) for s in ElectrodeStatus
+                  if s is not ElectrodeStatus.TEST_ONGOING}
 
 
 def electrode_number(marking: str) -> int | None:

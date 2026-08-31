@@ -148,11 +148,29 @@ class DbManager:
             cfg = {**cfg, "DB_DATABASE": database}
         self._driver_name = cfg["DB_DRIVER"]
         self._conn_str = self._build_connection_string(cfg)
+        # dbo.MetaData and dbo.ProcessData belong to the production system: this
+        # application only ever reads them, so they can come from a different
+        # database than the one it writes its own schema to. Setting
+        # DB_PLANT_DATABASE lets a test build work against the real electrode
+        # list without a copy of it going stale. Absent, it is the same database
+        # and the same connection.
+        plant = str(cfg.get("DB_PLANT_DATABASE", "") or "").strip()
+        self._database = str(cfg["DB_DATABASE"])
+        self._plant_database = plant or str(cfg["DB_DATABASE"])
+        self._plant_conn_str = (
+            self._conn_str if not plant or plant == cfg["DB_DATABASE"]
+            else self._build_connection_string({**cfg, "DB_DATABASE": plant}))
 
         # No fallback backend — if the driver is missing, install it and wait.
         self._ensure_driver_installed()
 
         self._session = SqlSession(self._conn_str)
+        self._plant_session = (
+            self._session if self._plant_conn_str == self._conn_str
+            else SqlSession(self._plant_conn_str))
+        if self._plant_conn_str != self._conn_str:
+            print(f"Reading the plant tables from {self._plant_database}, "
+                  f"writing to {cfg['DB_DATABASE']}")
         # The QC board lives here too, so its decisions can override the base
         # status on every read. The GUI shares this one instance.
         self._qc_board = QcBoardDbStore(self._session)
@@ -166,13 +184,19 @@ class DbManager:
         # than the electrode list. The GUI asks for it on a worker thread once
         # it is up, see load_vats, and the column appears when it arrives.
         self._vats: dict[str, str] = {}
+        # True until the process log has been read once, so the tab can show the
+        # column as loading rather than as absent. A database with no process
+        # log answers instantly and the column is dropped, as before.
+        self._vats_pending = True
         self._electrodes = ElectrodeProcessor(
             status_by_marking=load_status_from_db(self._session),
-            overrides_provider=self._qc_board.status_overrides,
+            overrides_provider=self._sweeping_decisions,
+            board_provider=self._qc_board.status_overrides,
             base_overrides_provider=self._settled_statuses,
             settled_priorities_provider=self._settled_priorities,
             vat_provider=lambda: self._vats,
-            cracked_provider=self._qc_board.cracked_electrodes)
+            vat_pending_provider=self.vats_pending,
+            ongoing_provider=self._qc_board.ongoing_electrodes)
         # Which quantities each sheet shows, from config.json. Read per
         # generation on first use, and one processor per generation and
         # electrode type, since none of the four measures quite the same thing.
@@ -252,21 +276,27 @@ class DbManager:
             )
 
     # ---- reads --------------------------------------------------------
-    def _connect(self):
+    def _connect(self, plant: bool = False):
         """Open a connection with the DATETIMEOFFSET converter registered.
 
         Every read/poll path goes through here so no caller can hit the
-        unsupported-type error.
+        unsupported-type error. ``plant`` opens the database the production
+        tables are read from, which is the same one unless it was configured
+        otherwise.
         """
         import pyodbc
 
-        conn = pyodbc.connect(self._conn_str)
+        conn = pyodbc.connect(self._plant_conn_str if plant else self._conn_str)
         conn.add_output_converter(SQL_DATETIMEOFFSET, _handle_datetimeoffset)
         return conn
 
     def _query(self, sql: str) -> pd.DataFrame:
         """Run a SELECT and return the normalized result."""
         return self._session.query(sql)
+
+    def _query_plant(self, sql: str) -> pd.DataFrame:
+        """The same, against the database the production tables are read from."""
+        return self._plant_session.query(sql)
 
     @staticmethod
     def _normalize(df: pd.DataFrame) -> pd.DataFrame:
@@ -288,7 +318,7 @@ class DbManager:
         lookup must use this same ORDER BY or an edit would hit the wrong row.
         """
         columns = ", ".join(f"[{c}]" for c in METADATA_COLUMNS)
-        self._metadata_cache = self._query(
+        self._metadata_cache = self._query_plant(
             f"SELECT {columns} FROM [{METADATA_SCHEMA}].[{METADATA_TABLE}] "
             f"WHERE {METADATA_FILTER} "
             f"ORDER BY {MARKING_NUMBER_SQL} DESC, [{METADATA_KEY}] DESC")
@@ -298,11 +328,31 @@ class DbManager:
         """Read the vat of every electrode, and adopt it. Safe off the UI thread.
 
         Empty when the process log is out of reach, which is what a database
-        holding only a MetaData snapshot looks like. The Vat column is then
-        left off the table rather than shown blank for every row.
+        holding only a MetaData snapshot looks like. The Vat column shows as
+        loading until this answers, then is dropped if nothing came back.
         """
-        self._vats = load_vat_by_marking(self._session)
+        try:
+            self._vats = load_vat_by_marking(self._plant_session)
+        finally:
+            self._vats_pending = False
         return self._vats
+
+    def database_name(self) -> str:
+        """The database the app writes to. The plant tables may be elsewhere."""
+        return self._database
+
+    def is_test_database(self) -> bool:
+        """Whether the writes are going somewhere other than production.
+
+        False when no production database is configured: a warning that cannot
+        tell the two apart would cry wolf on the real one.
+        """
+        production = app_config.production_database()
+        return bool(production) and self._database.lower() != production.lower()
+
+    def vats_pending(self) -> bool:
+        """Whether the vat join is still on its way."""
+        return self._vats_pending
 
     def reprocess_metadata(self) -> pd.DataFrame:
         """Re-run the processor over the last read — no database round trip.
@@ -344,6 +394,16 @@ class DbManager:
         """
         return self._sem_edx_processor(generation, electrode_type).process(
             self._sem_edx_rows(generation, electrode_type))
+
+    def get_all_sem_edx(self) -> dict[str, dict[str, pd.DataFrame]]:
+        """Every sheet, as ``{generation: {electrode type: frame}}``.
+
+        One call so the whole tab can be filled from a single deferred job, and
+        the same shape the SEM poll already answers in.
+        """
+        return {generation: {electrode_type: self.get_sem_edx(generation, electrode_type)
+                             for electrode_type in self.get_sem_edx_types(generation)}
+                for generation in self.get_sem_edx_generations()}
 
     def get_sem_edx_measurements(self, generation: str, electrode_type: str,
                                  electrode: str, position: str) -> pd.DataFrame:
@@ -767,12 +827,37 @@ class DbManager:
         """Statuses that no longer depend on the propagation rules.
 
         The finalised sweeps, except where the operator corrected that
-        electrode by hand afterwards.
+        electrode by hand afterwards, or where the verdict they were drawn from
+        has since been replaced by a re-test.
         """
-        superseded = self._superseded_by_hand()
+        superseded = self._superseded_by_hand() | self._qc_board.stale_inferences()
         return {marking: status
                 for marking, status in self._qc_board.archived_statuses().items()
                 if marking not in superseded}
+
+    def _settled_verdicts(self) -> dict[str, str]:
+        """Finalised verdicts, offered as decisions so their sweeps re-run.
+
+        Freezing the sweep's RESULT was not enough. Re-testing an electrode
+        writes a new verdict, and the neighbours the old one condemned are
+        dropped as stale, but nothing then reclaims them: only a decision
+        sweeps, and a finalised verdict was not one. So the electrodes around a
+        re-tested one fell back to Not Tested instead of following the new
+        result. A verdict is a verdict whether it was frozen or not.
+        """
+        superseded = self._superseded_by_hand()
+        return {marking: status
+                for marking, status in self._qc_board.archived_verdicts().items()
+                if marking not in superseded}
+
+    def _sweeping_decisions(self) -> dict[str, str]:
+        """Everything that sweeps: the finalised verdicts and the live board.
+
+        The board wins where both name an electrode, since it is the newer of
+        the two by definition. NOT the same as what locks a row: see
+        ``board_provider``, which is the live half of this on its own.
+        """
+        return {**self._settled_verdicts(), **self._qc_board.status_overrides()}
 
     def _settled_priorities(self) -> set[str]:
         """Frozen test-first flags, minus the superseded ones.
@@ -782,7 +867,9 @@ class DbManager:
         tells an operator to go and test an electrode on the strength of a
         decision that no longer applies to it.
         """
-        return self._qc_board.archived_priorities() - self._superseded_by_hand()
+        return (self._qc_board.archived_priorities()
+                - self._superseded_by_hand()
+                - self._qc_board.stale_inferences())
 
     def _known_markings(self) -> list[str]:
         """Every electrode the app knows about, from the last read."""
@@ -847,9 +934,8 @@ class DbManager:
         base = self._electrodes.base_status()
         # The same inputs the tab renders with. A finalise that swept differently
         # would freeze statuses nobody was shown.
-        effective, sources, priorities = propagate_detailed(
-            markings, base, decisions, vats=self._vats,
-            cracked=self._qc_board.cracked_electrodes())
+        effective, sources, priorities, _causes = propagate_detailed(
+            markings, base, decisions, vats=self._vats)
         not_tested = str(ElectrodeStatus.NOT_TESTED)
         frozen = {
             marking: (status, sources.get(marking, marking))
@@ -903,7 +989,8 @@ class DbManager:
         sql = (f"SELECT MAX([{METADATA_KEY}]), COUNT(*) "
                f"FROM [{METADATA_SCHEMA}].[{METADATA_TABLE}] "
                f"WHERE {METADATA_FILTER}")
-        row = self._poll(sql)
+        # Against the plant database, which may not be the one we write to.
+        row = self._poll(sql, plant=True)
         produced = (int(row[0] or 0), int(row[1] or 0))
         # Kept for the reload that follows, which uses it to decide whether the
         # 11k rows need reading again or only reprocessing. Set here rather than
@@ -976,7 +1063,7 @@ class DbManager:
                 for generation in self.get_sem_edx_generations()}
 
     # ---- polling ------------------------------------------------------
-    def _poll_connection(self):
+    def _poll_connection(self, plant: bool = False):
         """This thread's polling connection, opened once (lazily).
 
         Opening a fresh connection every few seconds per tab was the original
@@ -984,24 +1071,27 @@ class DbManager:
         thread that polls and the main thread that writes, so there is one
         each.
         """
-        conn = getattr(self._poll_local, "conn", None)
+        attribute = "plant_conn" if plant else "conn"
+        conn = getattr(self._poll_local, attribute, None)
         if conn is None:
-            conn = self._poll_local.conn = self._connect()
+            conn = self._connect(plant=plant)
+            setattr(self._poll_local, attribute, conn)
         return conn
 
-    def _poll(self, sql: str):
+    def _poll(self, sql: str, plant: bool = False):
         """Run one watermark query on the reused connection, returning its first
         row. If the connection dropped (Azure closes idle ones), reconnect and
         retry once."""
         import pyodbc
 
         try:
-            cursor = self._poll_connection().cursor()
+            cursor = self._poll_connection(plant).cursor()
             cursor.execute(sql)
             return cursor.fetchone()
         except pyodbc.Error:
-            self._close_poll_conn()  # stale connection — reconnect and retry once
-            cursor = self._poll_connection().cursor()
+            # stale connection — reconnect and retry once
+            self._close_poll_conn(plant)
+            cursor = self._poll_connection(plant).cursor()
             cursor.execute(sql)
             return cursor.fetchone()
 
@@ -1019,15 +1109,18 @@ class DbManager:
             cursor.execute(sql)
             return cursor.fetchall()
 
-    def _close_poll_conn(self) -> None:
-        """Drop this thread's polling connection."""
-        conn = getattr(self._poll_local, "conn", None)
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-            self._poll_local.conn = None
+    def _close_poll_conn(self, plant: bool | None = None) -> None:
+        """Drop this thread's polling connections, or just one of them."""
+        wanted = ("conn", "plant_conn") if plant is None else (
+            ("plant_conn",) if plant else ("conn",))
+        for attribute in wanted:
+            conn = getattr(self._poll_local, attribute, None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                setattr(self._poll_local, attribute, None)
 
     def close(self) -> None:
         """Release the polling connection (call on app shutdown)."""

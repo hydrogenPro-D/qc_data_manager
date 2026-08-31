@@ -16,12 +16,17 @@ import calendar
 import datetime as dt
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt, QDate, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QDate, QEvent, QPointF, QTimer, pyqtSignal
+from PyQt6.QtGui import QMouseEvent, QStandardItem, QStandardItemModel
+import qtawesome as qta
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QPushButton, QLineEdit, QStackedWidget, QComboBox,
+    QApplication, QCalendarWidget, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
+    QPushButton,
+    QLineEdit, QStackedWidget, QComboBox,
 )
 
 from .no_scroll_inputs import NoScrollComboBox, NoScrollDateEdit
+from .table_delegates import TickDelegate
 
 _ALL = "__all__"
 
@@ -35,7 +40,7 @@ _COMBO_STYLE = """
         font-size: 12px;
         font-weight: 600;
         color: #374151;
-        min-width: 104px;
+        min-width: 58px;
     }
     QComboBox:hover { border: 1px solid #9CA3AF; }
     QComboBox:focus { border: 1.5px solid #55BDBD; }
@@ -87,14 +92,62 @@ _DATE_EDIT_STYLE = """
         background-color: #FFFFFF;
         border: 1px solid #D1D5DB;
         border-radius: 13px;
-        padding: 4px 8px;
+        /* Room on the right for the calendar icon, which sits over the field. */
+        padding: 4px 26px 4px 10px;
         font-family: 'Segoe UI', Arial, sans-serif;
         font-size: 12px;
         color: #374151;
-        min-width: 92px;
+        min-width: 104px;
     }
+    QDateEdit:hover { border: 1px solid #9CA3AF; }
     QDateEdit:focus { border: 1.5px solid #55BDBD; }
-    QDateEdit::drop-down { border: none; width: 16px; }
+    /* Kept, and kept wide enough to click, because it is the only thing Qt
+       opens the popup from. The arrow is dropped: the icon replaces it. */
+    QDateEdit::drop-down {
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
+        border: none;
+        background: transparent;
+        width: 24px;
+    }
+    QDateEdit::down-arrow { image: none; width: 0px; height: 0px; }
+"""
+
+# The popup. Without this its header renders as two blank buttons between the
+# arrows, so the calendar shows a month without saying which one.
+_CALENDAR_STYLE = """
+    QCalendarWidget QWidget#qt_calendar_navigationbar {
+        background-color: #F1F5F5;
+        border-bottom: 1px solid #E1E7E7;
+    }
+    QCalendarWidget QToolButton {
+        color: #17302D;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 12px;
+        font-weight: 600;
+        background-color: transparent;
+        border: none;
+        padding: 4px 10px;
+        margin: 2px;
+    }
+    QCalendarWidget QToolButton:hover { background-color: #E0F0EE; }
+    QCalendarWidget QToolButton::menu-indicator { image: none; width: 0px; }
+    QCalendarWidget QSpinBox {
+        font-size: 12px;
+        color: #17302D;
+        background-color: #FFFFFF;
+        border: 1px solid #D1D5DB;
+    }
+    QCalendarWidget QAbstractItemView:enabled {
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 12px;
+        color: #1F2937;
+        background-color: #FFFFFF;
+        selection-background-color: #55BDBD;
+        selection-color: #FFFFFF;
+        outline: none;
+    }
+    QCalendarWidget QAbstractItemView:disabled { color: #B6C2C0; }
 """
 
 _SEARCH_STYLE = """
@@ -113,6 +166,26 @@ _SEARCH_STYLE = """
 
 _LABEL_STYLE = "color: #6B6B6B; font-size: 12px; font-weight: 600;"
 
+_CLEAR_BUTTON_STYLE = """
+    QPushButton {
+        background-color: #FFFFFF;
+        border: 1px solid #D1D5DB;
+        border-radius: 14px;
+        padding: 5px 14px;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 12px;
+        font-weight: 600;
+        color: #6B7280;
+    }
+    QPushButton:hover { border: 1px solid #55BDBD; color: #14B8A6; }
+    QPushButton:pressed { background-color: #F0FAFA; }
+"""
+
+# The search box reserves room for a phrase; a marking is six characters, and
+# the search box's min-width would otherwise decide the range fields' minimum
+# and keep the whole strip wider than the window.
+_RANGE_INPUT_STYLE = _SEARCH_STYLE.replace("min-width: 140px;", "min-width: 30px;")
+
 
 @dataclass
 class FilterDropdown:
@@ -121,6 +194,177 @@ class FilterDropdown:
     key: str
     label: str
     all_label: str = "All"
+
+
+class DatePickerEdit(NoScrollDateEdit):
+    """A date field that opens its calendar wherever you click.
+
+    Qt only opens the popup from the drop-down strip at the right edge, around
+    twenty pixels of a hundred pixel field, which on a tablet is a target
+    nobody hits. A press anywhere is forwarded there instead.
+
+    The icon is a child widget rather than a stylesheet image: a stylesheet
+    needs a file on disk, and this application draws its icons from a font.
+    """
+
+    ICON = 14
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._forwarding = False
+        self.setCalendarPopup(True)
+        self.setStyleSheet(_DATE_EDIT_STYLE)
+
+        self._icon = QLabel(self)
+        self._icon.setPixmap(
+            qta.icon("fa6s.calendar-days", color="#6B7280").pixmap(self.ICON, self.ICON))
+        # Transparent to the mouse, so a click on it reaches the field below and
+        # is forwarded like any other.
+        self._icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._icon.resize(self.ICON, self.ICON)
+
+        calendar = self.calendarWidget()
+        if calendar is not None:
+            calendar.setStyleSheet(_CALENDAR_STYLE)
+            calendar.setVerticalHeaderFormat(
+                QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+
+    def _place_icon(self) -> None:
+        self._icon.move(self.width() - self.ICON - 9,
+                        (self.height() - self.ICON) // 2)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().resizeEvent(event)
+        self._place_icon()
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Also placed here: the date range page starts hidden, and a widget
+        that is never shown is never resized either."""
+        super().showEvent(event)
+        self._place_icon()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Send the press to the drop-down, wherever it actually landed."""
+        if self._forwarding or not self.calendarPopup():
+            super().mousePressEvent(event)
+            return
+        self._forwarding = True
+        try:
+            at = QPointF(self.width() - 12, self.height() / 2)
+            for kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease):
+                QApplication.sendEvent(self, QMouseEvent(
+                    kind, at, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                    Qt.KeyboardModifier.NoModifier))
+        finally:
+            self._forwarding = False
+
+
+class CheckableFilterCombo(NoScrollComboBox):
+    """A dropdown whose options are ticked rather than picked one at a time.
+
+    Nothing ticked means everything, which is what the old single-value "All"
+    entry meant and is the state an operator expects to start in.
+
+    ROW 0 IS THE LABEL, not an option. A combo shows whichever row is current,
+    so one hidden row holds the summary text and stays current no matter what
+    is ticked below it.
+
+    The popup does not close on a tick. Choosing three vats would otherwise be
+    three trips through the list.
+    """
+
+    changed = pyqtSignal()
+
+    def __init__(self, all_label: str = "All", parent=None) -> None:
+        super().__init__(parent)
+        self._all_label = all_label
+        self._ticked = qta.icon("fa6s.square-check", color="#0C7C73")
+        self._unticked = qta.icon("fa6.square", color="#C9CDD3")
+
+        self.setModel(QStandardItemModel(self))
+        self.setItemDelegate(TickDelegate(self._ticked, self._unticked, self))
+        summary = QStandardItem(all_label)
+        summary.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.model().appendRow(summary)
+        self.view().setRowHidden(0, True)
+        self.view().viewport().installEventFilter(self)
+        self._show_summary()
+
+    # ---- the options ---------------------------------------------------
+    def set_options(self, options: list) -> None:
+        """Refill from the data, keeping whatever is still on offer ticked."""
+        kept = set(self.checked())
+        model = self.model()
+        model.removeRows(1, model.rowCount() - 1)
+        for option in options:
+            item = QStandardItem(str(option))
+            item.setCheckState(Qt.CheckState.Checked if str(option) in kept
+                               else Qt.CheckState.Unchecked)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            model.appendRow(item)
+        self._show_summary()
+
+    def checked(self) -> list:
+        """Everything ticked, in the order it is offered."""
+        model = self.model()
+        return [model.item(row).text() for row in range(1, model.rowCount())
+                if model.item(row).checkState() == Qt.CheckState.Checked]
+
+    def set_checked(self, values) -> None:
+        """Tick exactly these, and say so: setting a filter is a filter change
+        whether a person clicked it or the code did."""
+        wanted = {str(v) for v in values}
+        model = self.model()
+        for row in range(1, model.rowCount()):
+            item = model.item(row)
+            item.setCheckState(Qt.CheckState.Checked if item.text() in wanted
+                               else Qt.CheckState.Unchecked)
+        self._show_summary()
+        self.changed.emit()
+
+    # ---- ticking -------------------------------------------------------
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt naming)
+        """Toggle on release and swallow it, so the popup stays open."""
+        if obj is self.view().viewport() and event.type() == QEvent.Type.MouseButtonRelease:
+            index = self.view().indexAt(event.position().toPoint())
+            if index.isValid() and index.row() > 0:
+                item = self.model().item(index.row())
+                item.setCheckState(
+                    Qt.CheckState.Unchecked
+                    if item.checkState() == Qt.CheckState.Checked
+                    else Qt.CheckState.Checked)
+                self._show_summary()
+                self._paint_now()
+                self.changed.emit()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _paint_now(self) -> None:
+        """Draw the tick immediately, before whatever the change sets off.
+
+        ``update()`` only asks for a repaint, and the request waits in the
+        queue behind the filtering the change is about to run. On a big table
+        that is long enough to see: the box the operator just clicked stays
+        blank until the rows have finished, which reads as a missed click
+        rather than as a slow one. ``repaint()`` paints there and then.
+
+        The popup is its own window, so it is painted separately from the
+        closed control underneath it.
+        """
+        self.view().viewport().repaint()
+        self.repaint()
+
+    def _show_summary(self) -> None:
+        """Row 0 says what is ticked, since that is the row on display."""
+        chosen = self.checked()
+        if not chosen:
+            text = self._all_label
+        elif len(chosen) == 1:
+            text = chosen[0]
+        else:
+            text = f"{len(chosen)} chosen"
+        self.model().item(0).setText(text)
+        self.setCurrentIndex(0)
 
 
 class DateFilterWidget(QWidget):
@@ -186,13 +430,11 @@ class DateFilterWidget(QWidget):
 
     def _range_page(self) -> QWidget:
         today = QDate.currentDate()
-        self.start_edit = NoScrollDateEdit()
-        self.end_edit = NoScrollDateEdit()
+        self.start_edit = DatePickerEdit()
+        self.end_edit = DatePickerEdit()
         for edit, default in ((self.start_edit, today.addMonths(-1)), (self.end_edit, today)):
             edit.setDisplayFormat("dd.MM.yyyy")
-            edit.setCalendarPopup(True)
             edit.setDate(default)
-            edit.setStyleSheet(_DATE_EDIT_STYLE)
             edit.dateChanged.connect(lambda _d: self.changed.emit())
 
         to_label = QLabel("to")
@@ -207,6 +449,10 @@ class DateFilterWidget(QWidget):
         page_layout.addWidget(self.end_edit)
         page.setLayout(page_layout)
         return page
+
+    def reset(self) -> None:
+        """Back to All, the mode that filters nothing."""
+        self._set_mode(self.MODE_ALL)
 
     def _set_mode(self, mode: str) -> None:
         self._mode = mode
@@ -250,6 +496,84 @@ class DateFilterWidget(QWidget):
         return None, None
 
 
+class NumberRangeWidget(QWidget):
+    """A from/to pair over the number inside an identifier.
+
+    The prefix is optional on the way in, so "B14144", "b14144" and "14144" are
+    all the same electrode. Operators read markings with the letter and type
+    them that way; making them strip it would be a rule to remember for nothing.
+    """
+
+    changed = pyqtSignal()
+
+    WIDTH = 124
+
+    def __init__(self, caption: str = "Electrode", parent=None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        layout.addWidget(self._caption(caption), 0)
+
+        # Both ends named, so which field is which is readable without having
+        # to click into one. The fields themselves are then left blank.
+        self.low_edit = self._edit()
+        self.high_edit = self._edit()
+        for widget in (self._caption("from"), self.low_edit,
+                       self._caption("to"), self.high_edit):
+            layout.addWidget(widget, 0)
+        self.setLayout(layout)
+
+    @staticmethod
+    def _caption(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setStyleSheet(_LABEL_STYLE)
+        return label
+
+    def _edit(self) -> QLineEdit:
+        edit = QLineEdit()
+        edit.setFixedWidth(self.WIDTH)
+        edit.setClearButtonEnabled(True)
+        edit.setStyleSheet(_RANGE_INPUT_STYLE)
+        # On editing finished rather than per keystroke: half a marking is a
+        # number too, so filtering as you type would jump to B1 then B14 then
+        # B141 before landing anywhere useful.
+        edit.editingFinished.connect(self.changed.emit)
+        return edit
+
+    @staticmethod
+    def _number(text: str) -> int | None:
+        """The digits in what was typed, or None if there were none."""
+        digits = "".join(c for c in str(text) if c.isdigit())
+        return int(digits) if digits else None
+
+    def bounds(self) -> tuple[int | None, int | None]:
+        """``(low, high)`` inclusive, either side open when left blank.
+
+        Returned exactly as typed, including a low above a high. That range
+        holds nothing and the table shows nothing, which is the honest answer:
+        quietly swapping the two would hide the typo behind results that look
+        right, and the reader would never learn they had asked the wrong thing.
+        """
+        return (self._number(self.low_edit.text()),
+                self._number(self.high_edit.text()))
+
+    def clear(self) -> None:
+        """Both ends blank, which is no filter at all."""
+        for edit in (self.low_edit, self.high_edit):
+            edit.clear()
+
+    def describe(self, prefix: str = "B") -> str:
+        """The range in words, for a report that lists what was filtered."""
+        low, high = self.bounds()
+        if low is None and high is None:
+            return ""
+        if low is not None and high is not None:
+            return f"{prefix}{low} to {prefix}{high}"
+        return f"from {prefix}{low}" if low is not None else f"up to {prefix}{high}"
+
+
 class FilterBarWidget(QWidget):
     """A row of dropdown filters, a date filter, a search box and a result count."""
 
@@ -260,48 +584,81 @@ class FilterBarWidget(QWidget):
     def __init__(self, dropdowns: list[FilterDropdown], parent=None,
                  with_date: bool = True, with_search: bool = True,
                  search_placeholder: str = "Search",
-                 count_noun: str = "electrodes") -> None:
+                 count_noun: str = "electrodes",
+                 number_range: str = "", stacked: bool = False,
+                 with_clear: bool = False) -> None:
         super().__init__(parent)
         self._dropdowns = dropdowns
         self._count_noun = count_noun
         self._combos: dict[str, QComboBox] = {}
         self.date_filter: DateFilterWidget | None = None
         self.search_input: QLineEdit | None = None
+        # Only the tabs that ask for it: a caption turns it on and names it.
+        self._number_caption = number_range
+        self.number_range: NumberRangeWidget | None = None
+        # One row per group rather than one long strip. Past four dropdowns and
+        # a range a single row is wider than the window, and a filter strip that
+        # scrolls sideways can hide a filter that is switched on.
+        self._stacked = stacked
+        self._with_clear = with_clear
+        self.clear_button: QPushButton | None = None
 
         # Coalesces keystrokes so a big table re-renders once, not per character.
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(self.SEARCH_DEBOUNCE_MS)
-        self._search_timer.timeout.connect(self.changed.emit)
+        self._search_timer.timeout.connect(self._relay)
 
         self.init_ui(with_date, with_search, search_placeholder)
 
     def init_ui(self, with_date: bool, with_search: bool, search_placeholder: str) -> None:
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        rows: list[QHBoxLayout] = []
 
+        def row() -> QHBoxLayout:
+            line = QHBoxLayout()
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            outer.addLayout(line)
+            rows.append(line)
+            return line
+
+        first = row()
         for dropdown in self._dropdowns:
             caption = QLabel(dropdown.label)
             caption.setStyleSheet(_LABEL_STYLE)
-            combo = NoScrollComboBox()
+            combo = CheckableFilterCombo(dropdown.all_label)
             combo.setStyleSheet(_COMBO_STYLE)
-            combo.addItem(dropdown.all_label, _ALL)
-            combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            combo.changed.connect(self._relay)
             self._combos[dropdown.key] = combo
-            layout.addWidget(caption, 0)
-            layout.addWidget(combo, 0)
+            first.addWidget(caption, 0)
+            first.addWidget(combo, 0)
+
+        # Stacked, the ranges drop to a second line together; otherwise they
+        # follow on. Two lines rather than three: the electrode range and the
+        # date range are the same kind of question and read as a pair.
+        second = row() if self._stacked else first
+        if self._number_caption:
+            self.number_range = NumberRangeWidget(self._number_caption)
+            self.number_range.changed.connect(self._relay)
+            second.addWidget(self.number_range, 0)
 
         if with_date:
             self.date_filter = DateFilterWidget()
-            self.date_filter.changed.connect(self.changed.emit)
-            layout.addWidget(self.date_filter, 0)
+            self.date_filter.changed.connect(self._relay)
+            second.addWidget(self.date_filter, 0)
 
-        layout.addStretch(1)
+        for line in rows:
+            line.addStretch(1)
 
+        # The count and the search go at the right of the top line, where the
+        # eye lands after reading across the filters. Clear all goes at the
+        # right of the last one, after everything it undoes.
         self.count_label = QLabel("")
         self.count_label.setStyleSheet(_LABEL_STYLE)
-        layout.addWidget(self.count_label, 0)
+        first.addWidget(self.count_label, 0)
 
         if with_search:
             self.search_input = QLineEdit()
@@ -309,34 +666,98 @@ class FilterBarWidget(QWidget):
             self.search_input.setClearButtonEnabled(True)
             self.search_input.setStyleSheet(_SEARCH_STYLE)
             self.search_input.textChanged.connect(lambda _t: self._search_timer.start())
-            layout.addWidget(self.search_input, 0)
+            first.addWidget(self.search_input, 0)
 
-        self.setLayout(layout)
+        if self._with_clear:
+            self.clear_button = QPushButton("Clear all filters")
+            self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.clear_button.setStyleSheet(_CLEAR_BUTTON_STYLE)
+            self.clear_button.clicked.connect(self.clear_all)
+            first.addWidget(self.clear_button, 0)
+
+        # Kept so an owning tab can hang something off the end of a row, see
+        # add_trailing.
+        self._rows = rows
+        self.setLayout(outer)
+
+    def add_trailing(self, row: int, widget, right_inset: int = 0) -> None:
+        """Put a widget at the right end of one row, held clear of the edge.
+
+        ``right_inset`` is dead space after it, which is how a control can be
+        lined up with something narrower than this bar: the Electrodes tab
+        insets its zoom by the width of the panel beside the table, so the two
+        share a right edge.
+        """
+        if not 0 <= row < len(self._rows):
+            return
+        self._rows[row].addWidget(widget, 0)
+        if right_inset:
+            self._rows[row].addSpacing(right_inset)
+
+    def _relay(self) -> None:
+        """Paint the control that was just used, then start the filtering.
+
+        Everything downstream of ``changed`` runs synchronously, so until it
+        returns Qt has not drawn anything: the pressed button, the ticked box
+        or the cleared field would all appear only once the table had caught
+        up. Painting first costs nothing and makes the click feel answered.
+        """
+        self.repaint()
+        self.changed.emit()
+
+    def clear_all(self) -> None:
+        """Every filter back to showing everything, and one redraw for the lot.
+
+        Each control is silenced while it is reset, so a bar with six filters on
+        does not re-render the table six times on its way back to empty.
+        """
+        for combo in self._combos.values():
+            combo.blockSignals(True)
+            combo.set_checked([])
+            combo.blockSignals(False)
+        for widget in (self.number_range, self.date_filter, self.search_input):
+            if widget is None:
+                continue
+            widget.blockSignals(True)
+            if isinstance(widget, DateFilterWidget):
+                widget.reset()
+            else:
+                widget.clear()
+            widget.blockSignals(False)
+        # The search box debounces, so a pending redraw would otherwise land
+        # just after this one and undo nothing twice.
+        self._search_timer.stop()
+        self._relay()
 
     # ---- options / values ---------------------------------------------
     def set_options(self, key: str, options: list[str]) -> None:
-        """Refill one dropdown from the data, keeping the current selection."""
+        """Refill one dropdown from the data, keeping what is still ticked."""
         combo = self._combos.get(key)
-        if combo is None:
-            return
-        current = combo.currentData()
-        combo.blockSignals(True)
-        combo.clear()
-        dropdown = next(d for d in self._dropdowns if d.key == key)
-        combo.addItem(dropdown.all_label, _ALL)
-        for option in options:
-            combo.addItem(str(option), str(option))
-        index = combo.findData(current)
-        combo.setCurrentIndex(index if index >= 0 else 0)
-        combo.blockSignals(False)
+        if combo is not None:
+            combo.set_options(options)
+
+    def values(self, key: str) -> list[str]:
+        """Everything ticked in one dropdown. Empty means no filter at all."""
+        combo = self._combos.get(key)
+        return combo.checked() if combo is not None else []
 
     def value(self, key: str) -> str | None:
-        """The selected value, or ``None`` when the dropdown is on "All"."""
-        combo = self._combos.get(key)
-        if combo is None:
-            return None
-        data = combo.currentData()
-        return None if data == _ALL or data is None else str(data)
+        """The one ticked value, or None. For callers that only allow one."""
+        chosen = self.values(key)
+        return chosen[0] if len(chosen) == 1 else None
+
+    def active(self) -> dict:
+        """``{label: [ticked values]}`` for the dropdowns that are filtering.
+
+        Labels rather than keys, so a caller can put it in front of somebody.
+        """
+        chosen = {dropdown.label: self.values(dropdown.key)
+                  for dropdown in self._dropdowns
+                  if self.values(dropdown.key)}
+        span = self.number_range.describe() if self.number_range else ""
+        if span:
+            chosen[self._number_caption] = [span]
+        return chosen
 
     def set_month_options(self, months: list[tuple[int, int]]) -> None:
         if self.date_filter is not None:
@@ -344,6 +765,9 @@ class FilterBarWidget(QWidget):
 
     def date_bounds(self) -> tuple[dt.date | None, dt.date | None]:
         return self.date_filter.bounds() if self.date_filter else (None, None)
+
+    def number_bounds(self) -> tuple[int | None, int | None]:
+        return self.number_range.bounds() if self.number_range else (None, None)
 
     def search_text(self) -> str:
         return self.search_input.text().strip() if self.search_input else ""
