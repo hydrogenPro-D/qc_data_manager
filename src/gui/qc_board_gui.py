@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QStyledItemDelegate,
 )
-from PyQt6.QtCore import Qt, QEvent, QObject, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QEvent, QObject, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import (QFont, QBrush, QColor, QCursor, QDrag, QPainter,
                          QPalette, QPen, QPixmap)
 import pandas as pd
@@ -46,6 +46,7 @@ from .styles.table_styles import SCROLLBAR_STYLE, SLIM_SCROLLBAR_STYLE
 from .styles.input_styles import INPUT_FIELD_STYLE
 from .widgets.error_dialogs import ValidationErrorScrollDialog, ConfirmationDialog, build_header
 from .widgets.no_scroll_inputs import NoScrollComboBox
+from .widgets.table_delegates import TickDelegate
 from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
@@ -64,6 +65,7 @@ from src.data_access.qc_board.qc_board_columns import (
     IC_PENDING,
     IC_PASSED,
     IC_FAILED,
+    IC_DONE,
 )
 
 # Display text for each stage — relabel here, never in the enum.
@@ -74,8 +76,13 @@ STAGE_LABELS: dict[QcStage, str] = {
     QcStage.WAITING_APPROVAL: "Waiting for approval",
     QcStage.WAITING_FOR_RETEST: "Waiting for retest",
     QcStage.RETEST_ONGOING: "Retest ongoing",
-    QcStage.RELEASE: "Release",
-    QcStage.SCRAPPED: "Scrapped",
+    # These two say what the TEST found, because that is what a card landing
+    # here records: Tested and Released, or Tested and Scrapped. Released and
+    # Rejected are deliberately not used, those are the Electrodes tab's words
+    # for a neighbour that was never tested and is only presumed one way or
+    # the other. One word, one meaning.
+    QcStage.RELEASE: "Passed",
+    QcStage.SCRAPPED: "Failed",
 }
 
 # Card text colour, by what has been found about the electrode. Checked in
@@ -218,7 +225,9 @@ class ElectrodeDetailDialog(QDialog):
     on the toolbar, which finalises the whole board at once.
     """
 
-    IC_CHOICES = ((IC_PENDING, "Not tested"), (IC_PASSED, "Passed"), (IC_FAILED, "Failed"))
+    # In the order the work happens: not run, run, and then the two answers.
+    IC_CHOICES = ((IC_PENDING, "Not tested"), (IC_DONE, "Test done"),
+                  (IC_PASSED, "Passed"), (IC_FAILED, "Failed"))
     SEM_CHOICES = ((SEM_PENDING, "Not tested"), (SEM_CRACKED, "Cracked"),
                    (SEM_ACCEPTED, "Accepted"))
 
@@ -350,8 +359,16 @@ class ElectrodeDetailDialog(QDialog):
         self.accept()
 
 
+# How a card that has just arrived settles into place. On a tablet the finger
+# covers the target, so the drop is confirmed after the hand has moved away
+# rather than while it is still in the way.
+SETTLE_MS = 260
+SETTLE_TICK_MS = 30
+SETTLE_LIFT = 10          # pixels above its place that it eases down from
+
+
 class CardTextDelegate(QStyledItemDelegate):
-    """Keeps a card's text colour when it is selected.
+    """Keeps a card's text colour when it is selected, and eases arrivals in.
 
     A selected item is painted with the palette's HighlightedText, which
     ignores the per item foreground and comes out white. This feeds the card's
@@ -368,6 +385,25 @@ class CardTextDelegate(QStyledItemDelegate):
                   else QColor(brush) if brush is not None
                   else QColor(self.DEFAULT_TEXT))
         option.palette.setColor(QPalette.ColorRole.HighlightedText, colour)
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802 (Qt naming)
+        """Draw the card, lifted while it is still arriving.
+
+        The offset comes from the list it belongs to, which the board keeps in
+        step: a delegate is shared by every row, so it cannot hold the state of
+        one card itself.
+        """
+        offset = 0
+        lift = getattr(self.parent(), "settle_offset", None)
+        if callable(lift):
+            offset = lift(str(index.data() or ""))
+        if not offset:
+            super().paint(painter, option, index)
+            return
+        painter.save()
+        painter.translate(0, -offset)
+        super().paint(painter, option, index)
+        painter.restore()
 
 
 # The dragged marking, carried in the drag itself. Reading it back off the
@@ -400,6 +436,9 @@ class ElectrodeDropList(QListWidget):
         # Filled in by the board: everything highlighted anywhere, since a
         # selection can span cells and a list cannot see its siblings.
         self.selected_cards_provider = None
+        # And how far a card that is still arriving should be lifted. The board
+        # owns the animation; a list only draws what it is told.
+        self.settle_offset = None
 
         self.setStyleSheet(_LIST_STYLE)
         self.setDragEnabled(True)
@@ -649,51 +688,6 @@ _PICK_LIST_STYLE = """
 """
 
 
-class TickDelegate(QStyledItemDelegate):
-    """Draws a row of the pick list: its tick, its hover tint and its text.
-
-    All three by hand. A QListWidget carrying a ``::item`` stylesheet rule
-    hands its rows to the stylesheet style, and that drew the decoration only
-    for the row under the pointer: a ticked electrode looked unticked the
-    moment the pointer moved off it. Qt's own check indicator is no better,
-    having no glyph of its own for a stylesheet to colour.
-    """
-
-    SIZE = 15           # the tick, square
-    LEFT = 8            # from the row's left edge to the tick
-    GAP = 8             # from the tick to the text
-
-    def __init__(self, ticked, unticked, parent=None) -> None:
-        super().__init__(parent)
-        self._ticked = ticked.pixmap(self.SIZE, self.SIZE)
-        self._unticked = unticked.pixmap(self.SIZE, self.SIZE)
-
-    def paint(self, painter, option, index) -> None:
-        painter.save()
-        if option.state & QStyle.StateFlag.State_MouseOver:
-            painter.fillRect(option.rect, QColor("#F3FAFA"))
-        else:
-            painter.fillRect(option.rect, QColor("#FFFFFF"))
-
-        state = index.data(Qt.ItemDataRole.CheckStateRole)
-        ticked = state == Qt.CheckState.Checked or state == Qt.CheckState.Checked.value
-        top = option.rect.top() + (option.rect.height() - self.SIZE) // 2
-        painter.drawPixmap(option.rect.left() + self.LEFT, top,
-                           self._ticked if ticked else self._unticked)
-
-        painter.setPen(QPen(QColor("#1F1F1F")))
-        text = option.rect.adjusted(self.LEFT + self.SIZE + self.GAP, 0, -6, 0)
-        painter.drawText(text, int(Qt.AlignmentFlag.AlignLeft
-                                   | Qt.AlignmentFlag.AlignVCenter),
-                         str(index.data() or ""))
-        painter.restore()
-
-    def sizeHint(self, option, index) -> QSize:
-        hint = super().sizeHint(option, index)
-        return QSize(hint.width() + self.LEFT + self.SIZE + self.GAP,
-                     max(hint.height(), 26))
-
-
 class AddElectrodeDialog(QDialog):
     """Pick electrodes to put on the board.
 
@@ -879,6 +873,11 @@ class QcBoardWidget(QWidget):
         # marking -> {"type": ..., "status": ...}, rebuilt whenever electrodes load.
         self._index: dict[str, dict] = {}
         self._lists: dict[tuple[QcStage, ElectrodeType], ElectrodeDropList] = {}
+        # ``{marking: how far through its arrival it is}``, 0 to 1.
+        self._settling: dict[str, float] = {}
+        self._settle_timer = QTimer(self)
+        self._settle_timer.setInterval(SETTLE_TICK_MS)
+        self._settle_timer.timeout.connect(self._advance_settle)
         self._counts: dict[QcStage, QLabel] = {}
         # A redraw asked for while a card was in the air, applied when it lands.
         self._refresh_pending = False
@@ -1038,6 +1037,7 @@ class QcBoardWidget(QWidget):
         drop_list = ElectrodeDropList(stage, electrode_type)
         drop_list.selection_claimed.connect(self._clear_selection_except)
         drop_list.selected_cards_provider = self._selected_cards
+        drop_list.settle_offset = self._settle_offset
         drop_list.electrodes_dropped.connect(self._on_electrodes_dropped)
         drop_list.drag_finished.connect(self._on_drag_finished)
         drop_list.itemDoubleClicked.connect(
@@ -1101,6 +1101,37 @@ class QcBoardWidget(QWidget):
             if widget is not keep:
                 widget.clearSelection()
 
+    def _settle(self, markings) -> None:
+        """Start the arrival animation for the cards that just moved."""
+        wanted = {str(m).strip() for m in markings if str(m).strip()}
+        if not wanted:
+            return
+        self._settling = {marking: 0.0 for marking in wanted}
+        self._settle_timer.start()
+        self._repaint_cards()
+
+    def _advance_settle(self) -> None:
+        """One step of the ease, stopping when the last card has landed."""
+        step = SETTLE_TICK_MS / SETTLE_MS
+        self._settling = {marking: progress + step
+                          for marking, progress in self._settling.items()
+                          if progress + step < 1.0}
+        if not self._settling:
+            self._settle_timer.stop()
+        self._repaint_cards()
+
+    def _repaint_cards(self) -> None:
+        for widget in self._lists.values():
+            widget.viewport().update()
+
+    def _settle_offset(self, marking: str) -> int:
+        """How far above its place a card still is, in pixels."""
+        progress = self._settling.get(str(marking).strip())
+        if progress is None:
+            return 0
+        # Ease out: it drops in quickly and comes to rest gently.
+        return round(SETTLE_LIFT * (1 - progress) ** 2)
+
     def refresh(self) -> None:
         """Re-render every cell from the store.
 
@@ -1159,10 +1190,17 @@ class QcBoardWidget(QWidget):
                       (IC_RESULT, IC_PENDING, "The IC result"))
 
     def _missing_results(self, marking: str) -> list[str]:
-        """Which of the two tests this electrode has no result for."""
+        """Which of the two tests this electrode has no result for.
+
+        A crack settles it on its own: the electrode can be sent anywhere
+        without waiting for the IC result, since no IC result would release a
+        cracked electrode. Nothing moves it by itself, that stays a decision.
+        """
         if self.store is None:
             return []
         findings = self.store.findings(marking)
+        if str(findings.get(SEM_RESULT) or "") == SEM_CRACKED:
+            return []
         return [label for field, pending, label in self.MISSING_LABELS
                 if str(findings.get(field) or "") == pending]
 
@@ -1216,6 +1254,7 @@ class QcBoardWidget(QWidget):
         moved = [m for m in markings if self.store.move(str(m), stage)]
         if moved:
             self.refresh()
+            self._settle(moved)
             self.board_changed.emit()
 
     def _on_add_clicked(self) -> None:
@@ -1316,6 +1355,9 @@ class QcBoardWidget(QWidget):
     # reported: one result on its own says nothing about where the electrode
     # belongs, and the operator is often waiting on the other.
     FINDING_MOVES = {
+        # The IC has run and the SEM is clean, so the testing work is finished
+        # and the card queues for somebody to look at it.
+        (IC_DONE, SEM_ACCEPTED): QcStage.WAITING_APPROVAL,
         # Both instruments say yes, but releasing is a person's call: the card
         # queues for approval rather than deciding the electrode itself.
         (IC_PASSED, SEM_ACCEPTED): QcStage.WAITING_APPROVAL,
@@ -1323,6 +1365,13 @@ class QcBoardWidget(QWidget):
         (IC_PASSED, SEM_CRACKED): QcStage.WAITING_FOR_RETEST,
         # Both instruments say no, so there is nothing left to retest.
         (IC_FAILED, SEM_CRACKED): QcStage.SCRAPPED,
+    }
+
+    # Where a pair means something different because of where the card already
+    # is. A pass on a card already queued for approval IS the approval, so it
+    # releases; the same pass earlier in the flow only queues it.
+    FINDING_MOVES_FROM = {
+        QcStage.WAITING_APPROVAL: {(IC_PASSED, SEM_ACCEPTED): QcStage.RELEASE},
     }
 
     def _follow_findings(self, marking: str, stage: QcStage,
@@ -1334,10 +1383,13 @@ class QcBoardWidget(QWidget):
 
         Fires wherever the card currently is, a finished retest included: the
         results are the answer, and a card sitting somewhere they contradict is
-        the thing worth correcting.
+        the thing worth correcting. Where the card is can also change what the
+        results mean, see FINDING_MOVES_FROM.
         """
-        wanted = self.FINDING_MOVES.get((str(recorded.get(IC_RESULT) or ""),
-                                         str(recorded.get(SEM_RESULT) or "")))
+        pair = (str(recorded.get(IC_RESULT) or ""),
+                str(recorded.get(SEM_RESULT) or ""))
+        wanted = self.FINDING_MOVES_FROM.get(stage, {}).get(
+            pair, self.FINDING_MOVES.get(pair))
         if wanted is None or stage == wanted:
             return False
         if self.store is None or not self.store.move(marking, wanted):

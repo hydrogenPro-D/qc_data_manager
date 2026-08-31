@@ -77,7 +77,10 @@ PENDING = ""
 IC_PENDING = PENDING
 IC_PASSED = "passed"
 IC_FAILED = "failed"
-IC_RESULTS = (IC_PENDING, IC_PASSED, IC_FAILED)
+# The instrument has finished, the verdict has not come back. Not a verdict, so
+# it decides no column on its own, but it is not "nobody has run it" either.
+IC_DONE = "done"
+IC_RESULTS = (IC_PENDING, IC_DONE, IC_PASSED, IC_FAILED)
 
 # SEM outcome. Looking for cracks is what SEM does here, so its two outcomes
 # are named after what it finds rather than pass and fail. CRACKED is the one

@@ -186,19 +186,58 @@ class QcBoardDbStore:
             if QcStage(entry["stage"]) in STAGE_STATUS
         }
 
+    def ongoing_electrodes(self) -> set[str]:
+        """Everything on the board that no stage has decided yet.
+
+        The terminal stages produce a verdict and are handled by
+        ``status_overrides``; these are the ones still being worked on, which
+        the Electrodes tab shows as Test ongoing rather than as a guess about
+        them made by somebody else's scrap.
+        """
+        return {marking for marking, entry in self._entries.items()
+                if QcStage(entry["stage"]) not in STAGE_STATUS}
+
+    def archived_verdicts(self) -> dict[str, str]:
+        """The finalised statuses an electrode earned itself, not by inference.
+
+        Told apart by the record of what each was drawn from: a verdict names
+        itself, a swept neighbour names the electrode that condemned it.
+        """
+        return {marking: normalize_status(entry["status"])
+                for marking, entry in self._archived.items()
+                if entry.get("status") and (entry.get("from") or "") in ("", marking)}
+
+    def stale_inferences(self) -> set[str]:
+        """Finalised sweeps drawn from a verdict that has since been replaced.
+
+        A finalised status records what it was drawn from and when. Re-testing
+        that electrode writes a new verdict but does not touch the neighbours
+        the old one condemned, so they keep a status inferred from a verdict
+        that no longer exists, and the new one finds nothing left to claim: the
+        sweeps only ever take an electrode that has no status of its own.
+
+        Recognised by time rather than by value. An inference older than the
+        verdict it names was drawn from a previous version of it; one carrying
+        the same timestamp was written by the sweep that verdict just ran.
+        """
+        verdict_at = {marking: str(entry.get("at") or "")
+                      for marking, entry in self._archived.items()
+                      if (entry.get("from") or "") in ("", marking)}
+
+        stale = set()
+        for marking, entry in self._archived.items():
+            source = str(entry.get("from") or "")
+            if not source or source == marking:
+                continue
+            current = verdict_at.get(source, "")
+            if current and current > str(entry.get("at") or ""):
+                stale.add(marking)
+        return stale
+
     def archived_statuses(self) -> dict[str, str]:
         """``{marking: status}`` for everything already finalised."""
         return {marking: normalize_status(entry["status"])
                 for marking, entry in self._archived.items() if entry.get("status")}
-
-    def cracked_electrodes(self) -> set[str]:
-        """Everything on the board whose SEM result was a crack.
-
-        A crack is the vat's doing, so a scrap carrying one spreads along its
-        vat rather than along production, see ``status_propagation``.
-        """
-        return {marking for marking, entry in self._entries.items()
-                if _finding(entry.get(SEM_RESULT), SEM_RESULT) == SEM_CRACKED}
 
     def archived_times(self) -> dict[str, str]:
         """``{marking: when the verdict was frozen}``, to order it against a
