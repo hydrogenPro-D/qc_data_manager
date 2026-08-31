@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -28,6 +30,15 @@ class CellStyle:
 
 
 class DataTableWidget(QTableWidget):
+
+    # How far the zoom goes, and the row heights it scales. Bounded because a
+    # table zoomed past either end stops being a table: too small to read, or
+    # two columns wide.
+    ZOOM_MIN = 0.8
+    ZOOM_MAX = 1.8
+    ZOOM_STEP = 0.1
+    BASE_ROW_HEIGHT = 30
+    LINE_HEIGHT = 25
     """Renders a DataFrame; cell text goes through an optional format callback."""
 
     def __init__(
@@ -67,6 +78,13 @@ class DataTableWidget(QTableWidget):
         self.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+
+        # Measured from the size the table was built at, never from the last
+        # step, so stepping up and back down lands exactly where it started.
+        self._zoom = 1.0
+        # Captured on the first zoom: the owning tab sets the sheet after this
+        # constructor runs, so there is nothing to remember yet.
+        self._base_stylesheet: str | None = None
 
         self.min_column_width = min_column_width
         self.max_column_width = max_column_width
@@ -258,9 +276,42 @@ class DataTableWidget(QTableWidget):
             if item:
                 max_lines = max(max_lines, item.text().count("\n") + 1)
 
-        base_height = 30
-        line_height = 25
-        self.setRowHeight(row_idx, base_height + (max_lines - 1) * line_height)
+        height = self.BASE_ROW_HEIGHT + (max_lines - 1) * self.LINE_HEIGHT
+        self.setRowHeight(row_idx, round(height * self._zoom))
+
+    def zoom(self) -> float:
+        """The current scale, 1.0 being the size the table was built at."""
+        return self._zoom
+
+    def set_zoom(self, scale: float) -> None:
+        """Scale the text and the rows together.
+
+        Both, or the effect is useless: a bigger font in a row of fixed height
+        is clipped, and taller rows on their own only waste the screen. The
+        delegates take their font from the widget, so the badges follow along
+        without knowing anything about this.
+        """
+        scale = max(self.ZOOM_MIN, min(self.ZOOM_MAX, round(scale, 2)))
+        if scale == self._zoom:
+            return
+        self._zoom = scale
+
+        # Through the stylesheet, not setFont. A Qt style sheet that names a
+        # font-size wins over the widget's font, so setting the font here
+        # scaled the header (which has none) and left the cells alone. Every
+        # size in the sheet is scaled together, so the table keeps its
+        # proportions and this stays domain-neutral: the sizes live in the
+        # style, not in here.
+        if self._base_stylesheet is None:
+            self._base_stylesheet = self.styleSheet()
+        self.setStyleSheet(re.sub(
+            r"font-size:\s*(\d+)px",
+            lambda m: f"font-size: {max(1, round(int(m.group(1)) * self._zoom))}px",
+            self._base_stylesheet))
+
+        for row in range(self.rowCount()):
+            self._update_row_height(row)
+        self.resize_columns_to_contents_constrained()
 
     @staticmethod
     def sync_row_heights(tables) -> None:

@@ -58,6 +58,7 @@ from .widgets.error_dialogs import (
 from .widgets.filter_bar_widget import FilterBarWidget, FilterDropdown
 from .widgets.no_wheel_tabs import NoWheelTabWidget
 from .widgets.no_scroll_inputs import NoScrollComboBox
+from .widgets.skeleton_overlay import SkeletonOverlay
 from src.data_access.electrodes.status_propagation import electrode_number
 from src.data_access.sem_edx.sem_edx_columns import (
     SemEdxColumns,
@@ -1343,6 +1344,10 @@ class SemEdxTypeWidget(QWidget):
             scroll_to_top_on_load=False,
         )
         self.table.setStyleSheet(COMPACT_TABLE_STYLE)
+        # Covers the table until the sheets have been read. Narrower columns
+        # here than on the Electrodes tab, since this one holds a point per
+        # column and reads as a denser grid.
+        self._skeleton = SkeletonOverlay(self.table, columns=9)
         self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setSelectionMode(self.table.SelectionMode.NoSelection)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1437,8 +1442,17 @@ class SemEdxTypeWidget(QWidget):
     # ------------------------------------------------------------------
     # Data loading / filtering
     # ------------------------------------------------------------------
+    def show_loading(self) -> None:
+        """Say the sheets are on their way, until ``load_data`` arrives."""
+        self._skeleton.start()
+
+    def hide_loading(self) -> None:
+        """Give up on the placeholder, for a read that never answered."""
+        self._skeleton.stop()
+
     def load_data(self, dataframe: pd.DataFrame | None) -> None:
         """Take a new dataset, refresh the filter options and re-render."""
+        self._skeleton.stop()
         self.df_source = self._in_production_order(dataframe)
         self._refresh_filter_options()
         self._render()
@@ -1492,9 +1506,9 @@ class SemEdxTypeWidget(QWidget):
         mask = pd.Series(True, index=df.index)
         for key, column in ((FILTER_POSITION, str(SemEdxColumns.POSITION)),
                             (FILTER_OPERATOR, str(SemEdxColumns.OPERATOR))):
-            chosen = self.filter_bar.value(key)
+            chosen = self.filter_bar.values(key)
             if chosen and column in df.columns:
-                mask &= df[column].astype(str).str.strip() == chosen
+                mask &= df[column].astype(str).str.strip().isin(set(chosen))
 
         search = self.filter_bar.search_text().lower()
         if search:
@@ -2038,6 +2052,16 @@ class SemEdxGenerationWidget(QWidget):
 
         return ("Imported" if imported else "Nothing imported"), lines
 
+    def show_loading(self) -> None:
+        """Every electrode type of this generation is still being read."""
+        for widget in self.types.values():
+            widget.show_loading()
+
+    def hide_loading(self) -> None:
+        """Take every placeholder of this generation away."""
+        for widget in self.types.values():
+            widget.hide_loading()
+
     def load_data(self, dataframe: pd.DataFrame | None, electrode_type: str) -> None:
         """Hand one electrode type's samples to its sub tab."""
         widget = self.types.get(str(electrode_type).strip().upper())
@@ -2116,6 +2140,16 @@ class SemEdxWidget(QWidget):
         if not generation:
             return next(iter(self.generations.values()), None)
         return self.generations.get(generation)
+
+    def show_loading(self) -> None:
+        """Every sheet is still being read, so every sub tab says so."""
+        for widget in self.generations.values():
+            widget.show_loading()
+
+    def hide_loading(self) -> None:
+        """Take every placeholder away, for a read that never answered."""
+        for widget in self.generations.values():
+            widget.hide_loading()
 
     def load_data(self, dataframe: pd.DataFrame | None, electrode_type: str = "",
                   generation: str = "") -> None:

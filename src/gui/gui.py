@@ -11,11 +11,12 @@ import sys
 
 from PyQt6.QtWidgets import (
     QApplication,
+    QLabel,
     QMainWindow,
     QWidget,
     QVBoxLayout,
 )
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 import qtawesome as qta
 
 from src.data_access import app_config, build_backend
@@ -28,6 +29,28 @@ from .styles.tab_styles import MAIN_TAB_STYLE
 from .styles.tooltip_styles import TOOLTIP_STYLE
 
 APP_TITLE = "QC Data Manager"
+TEST_DB_WARNING = "Connected to test database"
+# Loud on purpose. Someone who does not notice this will believe a morning of
+# decisions went to the real board.
+TEST_DB_STYLE = ("color: #C81E1E; font-family: 'Segoe UI', Arial, sans-serif; "
+                 "font-size: 13px; font-weight: 700; padding: 0 14px 0 8px;")
+
+
+def _seeded_on_first_use(build):
+    """Wrap an update callback so its baseline query waits for the first poll.
+
+    The baseline is "what we have already seen", so taking it at the first poll
+    rather than at construction is if anything the more truthful moment: by
+    then the deferred reads have landed and the tabs really have seen it.
+    """
+    holder = {}
+
+    def call():
+        if "callback" not in holder:
+            holder["callback"] = build()
+        return holder["callback"]()
+
+    return call
 
 
 class MainWindow(QMainWindow):
@@ -56,14 +79,20 @@ class MainWindow(QMainWindow):
 
         self.tabs = NoWheelTabWidget()
         self.tabs.setStyleSheet(MAIN_TAB_STYLE)
+        self._warn_if_not_production()
 
         # Built once and shared: each one seeds its watermark baseline when it
         # is created, so building a second copy per entity would cost a query
         # at startup and answer the same question.
+        #
+        # Built lazily, though: seeding is a query per entity, and the
+        # Electrodes one alone was about 700ms of the window's startup. Nothing
+        # reads a baseline until the first poll, five seconds later and on the
+        # worker thread, so that is where the cost belongs.
         self._update_callbacks = {
-            "electrodes": self.backend.get_metadata_update_callback(),
-            "qc_board": self.backend.get_qc_board_update_callback(),
-            "sem_edx": self.backend.get_sem_edx_update_callback(),
+            "electrodes": _seeded_on_first_use(self.backend.get_metadata_update_callback),
+            "qc_board": _seeded_on_first_use(self.backend.get_qc_board_update_callback),
+            "sem_edx": _seeded_on_first_use(self.backend.get_sem_edx_update_callback),
         }
 
         # --- Electrodes tab: wired entirely through injected callables ---
@@ -73,8 +102,10 @@ class MainWindow(QMainWindow):
             on_check_for_updates=self._update_callbacks["electrodes"],
             on_status_override=self._on_status_override,
         )
-        electrodes = self.backend.get_metadata()
-        self.electrodes_widget.load_data(electrodes)
+        # Read after the window is up, not before it. The 12k rows and their
+        # status propagation are about 700ms, and nothing about opening the
+        # window needs them. The tab shows a placeholder until they land.
+        self.electrodes_widget.show_loading()
         self.tabs.addTab(self.electrodes_widget, "Electrodes")
 
         # --- QC tab: the board, sharing the backend's store so a decision here
@@ -86,7 +117,9 @@ class MainWindow(QMainWindow):
             on_undo=self.backend.undo_last_action,
             on_check_for_updates=self._update_callbacks["qc_board"],
         )
-        self.qc_board_widget.load_electrodes(electrodes)
+        # Its own board is already loaded (the backend read it while
+        # connecting); the electrode list its add dialog offers arrives with
+        # the deferred read, the same frame the Electrodes tab gets.
         self.qc_board_widget.board_changed.connect(self._on_board_changed)
         self.tabs.addTab(self.qc_board_widget, "QC")
 
@@ -113,7 +146,9 @@ class MainWindow(QMainWindow):
             on_images_available=self.backend.sem_images_available,
             on_check_for_updates=self._update_callbacks["sem_edx"],
         )
-        self._reload_sem_edx()
+        # Same again: the four sheets are about 560ms and the tab is not even
+        # the visible one at launch.
+        self.sem_edx_widget.show_loading()
         self.sem_edx_widget.data_changed.connect(self._on_sem_edx_changed)
         self.tabs.addTab(self.sem_edx_widget, "SEM EDX")
 
@@ -152,22 +187,54 @@ class MainWindow(QMainWindow):
         self.poll_requested.connect(self._poll_worker.poll)
         self._poll_worker.polled.connect(self._on_polled)
 
-        # The vat of every electrode comes from the process log, a far bigger
-        # table than the electrode list, and the window has nothing to do with
-        # that column while it opens. It is fetched here instead, on the same
-        # thread, and the column appears when it lands.
-        self._deferred_worker = DeferredLoad({"vats": self.backend.load_vats})
+        # Everything the window does not need in order to open, on the same
+        # thread. Together these were about 1.9 seconds of blank screen before
+        # the first pixel; now the window is up and each tab fills in.
+        self._deferred_worker = DeferredLoad({
+            "electrodes": self.backend.get_metadata,
+            "sem_edx": self.backend.get_all_sem_edx,
+            "vats": self.backend.load_vats,
+        })
         self._deferred_worker.moveToThread(self._poll_thread)
         self.deferred_requested.connect(self._deferred_worker.run)
         self._deferred_worker.loaded.connect(self._on_deferred)
+        # Which tabs are still showing a placeholder, so the poll timer does
+        # not ask about a table that has not had its first read.
+        self._awaiting = {"electrodes", "sem_edx"}
 
         self._poll_thread.start()
-        self.deferred_requested.emit("vats")
+        # THE VATS GO FIRST, ahead of the electrodes that are actually on
+        # screen, because the statuses are computed FROM them. A scrap spreads
+        # its doubt along the electrodes of one vat; with no vat on record it
+        # falls back to the production sequence, which is a different rule
+        # reaching different electrodes. Read second, they made half the table
+        # change status a few seconds after it appeared, and the first version
+        # was the wrong one. Better a longer placeholder than a confident
+        # wrong answer.
+        for key in ("vats", "electrodes", "sem_edx"):
+            self.deferred_requested.emit(key)
 
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.setInterval(app_config.auto_refresh_interval_ms())
         self._auto_refresh_timer.timeout.connect(self._auto_refresh_tick)
         self._auto_refresh_timer.start()
+
+    def _warn_if_not_production(self) -> None:
+        """Say so, in the tab bar's corner, when this is not the real database.
+
+        Only the QC data moves: the electrodes are read from the plant database
+        either way, so the thing worth warning about is where writes land.
+        """
+        try:
+            if not self.backend.is_test_database():
+                return
+        except Exception as e:
+            print(f"Could not tell which database this is: {e}")
+            return
+        banner = QLabel(TEST_DB_WARNING)
+        banner.setStyleSheet(TEST_DB_STYLE)
+        banner.setToolTip(f"Writing to {self.backend.database_name()}")
+        self.tabs.setCornerWidget(banner, Qt.Corner.TopRightCorner)
 
     # ------------------------------------------------------------------
     # Wiring helpers
@@ -309,6 +376,11 @@ class MainWindow(QMainWindow):
             return
         for key, candidate in self._widgets_by_key.items():
             if candidate is widget:
+                # A tab still waiting for its first read has nothing to compare
+                # against, and the answer would land on a table that is about
+                # to be rebuilt anyway.
+                if key in self._awaiting:
+                    return
                 self._poll_in_flight = True
                 self.poll_requested.emit(key)
                 return
@@ -316,15 +388,36 @@ class MainWindow(QMainWindow):
     def _on_deferred(self, key: str, result) -> None:
         """Something the window opened without has arrived. On the UI thread.
 
-        A full reload rather than a patch: the vats add a column, and patching
-        only ever rewrites the cells of columns the table already has.
+        Always a full reload rather than a patch: the tab it is going to has
+        nothing in it yet, and patching only ever rewrites the cells of columns
+        the table already has, which the vats add one to.
         """
-        if key != "vats" or not result:
-            return
+        # Dropped whether or not it worked: a read that failed is not going to
+        # be retried, and leaving the tab out of the polling forever would mean
+        # it never recovered.
+        self._awaiting.discard(key)
         try:
-            self._apply_electrodes(self.backend.reprocess_metadata(), reload=True)
+            if key == "electrodes":
+                if result is None:
+                    self.electrodes_widget.hide_loading()
+                else:
+                    self._apply_electrodes(result, reload=True)
+            elif key == "sem_edx":
+                if not result:
+                    self.sem_edx_widget.hide_loading()
+                for generation, frames in (result or {}).items():
+                    for electrode_type, frame in (frames or {}).items():
+                        self.sem_edx_widget.load_data(frame, electrode_type, generation)
+            elif key == "vats" and result:
+                # Only once the table exists. At startup the vats land first
+                # and the electrode read is still queued behind them, so it
+                # picks them up by itself; reprocessing here would instead
+                # fetch all 12k rows on the UI thread and freeze the window.
+                if "electrodes" not in self._awaiting:
+                    self._apply_electrodes(self.backend.reprocess_metadata(),
+                                           reload=True)
         except Exception as e:
-            print(f"Showing the vat numbers failed: {e}")
+            print(f"Applying the deferred {key} read failed: {e}")
 
     def _on_polled(self, key: str, result) -> None:
         """Render what the worker found. Back on the UI thread."""

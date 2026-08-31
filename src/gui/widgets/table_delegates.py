@@ -10,12 +10,12 @@ through callbacks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QFontMetrics
-from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 BAR_WIDTH = 4
 DEFAULT_TEXT = "#1F1F1F"
@@ -49,14 +49,35 @@ class RowHighlight:
     picked_color: str = "#14B8A6"
     hover_width: int = 1
     picked_width: int = 2
+    # ``{row: how strongly it is still lit}``, 1.0 down to 0. Rows somebody
+    # else changed, so a status moving under the operator is noticed without a
+    # dialog interrupting them.
+    flashing: dict = field(default_factory=dict)
+    flash_color: str = "#14B8A6"
 
     def clear(self) -> None:
         self.hover_row = -1
         self.picked_row = -1
+        self.flashing = {}
+
+    def flash_fill(self, row: int) -> Optional[QColor]:
+        """The wash over a row that just changed, or None once it has faded."""
+        strength = self.flashing.get(row, 0.0)
+        if strength <= 0:
+            return None
+        colour = QColor(self.flash_color)
+        colour.setAlphaF(min(1.0, max(0.0, strength)) * 0.35)
+        return colour
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         """The row's outline, as much of it as this cell owns."""
         row = index.row()
+        wash = self.flash_fill(row)
+        if wash is not None:
+            painter.save()
+            painter.fillRect(option.rect, wash)
+            painter.restore()
+
         if row == self.picked_row:
             color, width = self.picked_color, self.picked_width
         elif row == self.hover_row:
@@ -187,6 +208,47 @@ class RowFillDelegate(QStyledItemDelegate):
         return QSize(hint.width() + padding, max(hint.height(), 28))
 
 
+class LoadingCellDelegate(RowFillDelegate):
+    """A row fill that shows a pulsing bar where a value has not arrived yet.
+
+    A column that is genuinely still loading is worth showing as loading. Left
+    out until its data lands, it appears from nowhere a second or two after the
+    window opens, which reads as a glitch rather than as progress.
+
+    It extends the row fill rather than replacing it so the column keeps the
+    hover outline and the poll flash like every other one.
+    """
+
+    BAR_HEIGHT = 8
+    BAR_INSET = 14
+
+    def __init__(self, pulse: Callable[[], float], *args, **kwargs) -> None:
+        """``pulse`` gives 0 to 1, how bright the bar is now, or below zero for
+        "nothing is pending, draw the cell normally"."""
+        super().__init__(*args, **kwargs)
+        self._pulse = pulse
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        super().paint(painter, option, index)
+        strength = self._pulse()
+        if strength < 0 or str(index.data() or "").strip():
+            return
+
+        painter.save()
+        colour = QColor(self._placeholder_color)
+        colour.setAlphaF(0.16 + 0.24 * min(1.0, max(0.0, strength)))
+        bar = QRectF(option.rect.left() + self.BAR_INSET,
+                     option.rect.center().y() - self.BAR_HEIGHT / 2,
+                     max(0.0, option.rect.width() - 2 * self.BAR_INSET),
+                     float(self.BAR_HEIGHT))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(colour))
+        painter.drawRoundedRect(bar, 3, 3)
+        painter.restore()
+
+    _placeholder_color = "#94A3B8"
+
+
 class StatusPillDelegate(QStyledItemDelegate):
     """Draws the cell's text as a rounded, bordered badge instead of plain text."""
 
@@ -202,7 +264,9 @@ class StatusPillDelegate(QStyledItemDelegate):
 
     def __init__(self, style_for_value: Callable[[str], Optional[PillStyle]],
                  parent=None, right_gutter: int = 0, widest_label: str = "",
-                 highlight: Optional[RowHighlight] = None) -> None:
+                 highlight: Optional[RowHighlight] = None,
+                 width_text: Optional[Callable[[str], str]] = None,
+                 display_text: Optional[Callable[[str], str]] = None) -> None:
         """Args:
             style_for_value: Maps a cell's text to the badge style to draw.
             right_gutter: Pixels kept clear on the right of the cell, room for a
@@ -211,15 +275,27 @@ class StatusPillDelegate(QStyledItemDelegate):
                 samples the first ~1000 rows when content sizing, so a long
                 badge further down would otherwise never be measured and the
                 column would come out too narrow for it.
+            width_text: Maps a label to the text its badge should be *measured*
+                against, when that differs from what is drawn. An animated
+                label is measured at its longest frame, or the badge would
+                resize on every tick and read as a flicker.
+            display_text: Maps a cell's value to what the badge actually draws,
+                resolved on every paint. An animation has to live here rather
+                than in the cell: the cell's text is written once when the table
+                is built, and repainting it would draw the same thing forever.
         """
         super().__init__(parent)
         self._style_for_value = style_for_value
         self._right_gutter = right_gutter
         self._widest_label = widest_label
         self._highlight = highlight
+        self._width_text = width_text
+        self._display_text = display_text
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         text = str(index.data() or "").strip()
+        if self._display_text is not None:
+            text = self._display_text(text)
         style = self._style_for_value(text)
 
         # Row fill underneath, whether or not this value has a badge.
@@ -244,7 +320,8 @@ class StatusPillDelegate(QStyledItemDelegate):
 
         metrics = painter.fontMetrics()
         available = max(0, option.rect.width() - 8 - self._right_gutter)
-        wanted = (metrics.horizontalAdvance(label) + 2 * self.PADDING_X
+        measured = self._width_text(label) if self._width_text else label
+        wanted = (metrics.horizontalAdvance(measured) + 2 * self.PADDING_X
                   + self.TEXT_CUSHION)
         width = min(max(self.MIN_WIDTH, wanted), available)
         height = metrics.height() + 2 * self.PADDING_Y
@@ -306,3 +383,48 @@ class StatusPillDelegate(QStyledItemDelegate):
             return 0
         return (metrics.horizontalAdvance(label) + 2 * self.PADDING_X
                 + self.TEXT_CUSHION + self._right_gutter + 8 + 6)
+
+
+class TickDelegate(QStyledItemDelegate):
+    """Draws a row of the pick list: its tick, its hover tint and its text.
+
+    All three by hand. A QListWidget carrying a ``::item`` stylesheet rule
+    hands its rows to the stylesheet style, and that drew the decoration only
+    for the row under the pointer: a ticked electrode looked unticked the
+    moment the pointer moved off it. Qt's own check indicator is no better,
+    having no glyph of its own for a stylesheet to colour.
+    """
+
+    SIZE = 15           # the tick, square
+    LEFT = 8            # from the row's left edge to the tick
+    GAP = 8             # from the tick to the text
+
+    def __init__(self, ticked, unticked, parent=None) -> None:
+        super().__init__(parent)
+        self._ticked = ticked.pixmap(self.SIZE, self.SIZE)
+        self._unticked = unticked.pixmap(self.SIZE, self.SIZE)
+
+    def paint(self, painter, option, index) -> None:
+        painter.save()
+        if option.state & QStyle.StateFlag.State_MouseOver:
+            painter.fillRect(option.rect, QColor("#F3FAFA"))
+        else:
+            painter.fillRect(option.rect, QColor("#FFFFFF"))
+
+        state = index.data(Qt.ItemDataRole.CheckStateRole)
+        ticked = state == Qt.CheckState.Checked or state == Qt.CheckState.Checked.value
+        top = option.rect.top() + (option.rect.height() - self.SIZE) // 2
+        painter.drawPixmap(option.rect.left() + self.LEFT, top,
+                           self._ticked if ticked else self._unticked)
+
+        painter.setPen(QPen(QColor("#1F1F1F")))
+        text = option.rect.adjusted(self.LEFT + self.SIZE + self.GAP, 0, -6, 0)
+        painter.drawText(text, int(Qt.AlignmentFlag.AlignLeft
+                                   | Qt.AlignmentFlag.AlignVCenter),
+                         str(index.data() or ""))
+        painter.restore()
+
+    def sizeHint(self, option, index) -> QSize:
+        hint = super().sizeHint(option, index)
+        return QSize(hint.width() + self.LEFT + self.SIZE + self.GAP,
+                     max(hint.height(), 26))

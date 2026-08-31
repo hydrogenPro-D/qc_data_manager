@@ -41,6 +41,16 @@ def auto_refresh_interval_ms(default: int = 5000) -> int:
     return int(load_config().get("ui", {}).get("auto_refresh_interval_ms", default))
 
 
+def production_database(default: str = "") -> str:
+    """Which database name is the real one, so the app can say when it is not.
+
+    Named here rather than worked out from the name itself: the production
+    database is called dataloggingDev, so any guess based on the word "dev" or
+    "test" would get it exactly backwards.
+    """
+    return str(load_config().get("database", {}).get("production", default)).strip()
+
+
 def sem_edx_layout(generation: str = "") -> dict:
     """Which quantities each SEM sheet shows, and in what order.
 

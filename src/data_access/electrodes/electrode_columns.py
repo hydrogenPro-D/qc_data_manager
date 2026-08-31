@@ -84,6 +84,11 @@ class ElectrodeStatus(Enum):
     SCRAPPED = "Scrapped"
     NEEDS_TESTING = "Needs testing"
     NOT_TESTED = "Not Tested"
+    # On the QC board and not yet decided. Never stored: it is read off the
+    # board on every render, so it appears when a card is added and goes when
+    # the card is decided or removed. That is also why it is not offered as a
+    # status somebody can set by hand.
+    TEST_ONGOING = "Test ongoing"
 
     def __str__(self) -> str:
         """Return the string value of the status."""
