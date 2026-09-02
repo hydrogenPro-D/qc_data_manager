@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional
 
@@ -151,6 +152,15 @@ class DataTableWidget(QTableWidget):
 
         display_df = dataframe[display_column_order] if display_column_order else dataframe
 
+        # Empty it first, which is what drops the cell widgets. setRowCount and
+        # setColumnCount only delete the ones in rows or columns that
+        # disappear, and setItem does not touch them at all, so a redraw of the
+        # same shape keeps them and a redraw whose columns MOVED keeps them in
+        # the wrong column. That is how the SEM tab's View buttons ended up
+        # among the Ni:S numbers while it was still loading. Costs nothing:
+        # _populate_row builds a new item for every cell either way.
+        self.setRowCount(0)
+
         self.setColumnCount(len(display_df.columns))
         self.setHorizontalHeaderLabels(display_df.columns.astype(str))
         self.setRowCount(len(display_df))
@@ -171,6 +181,22 @@ class DataTableWidget(QTableWidget):
             self.scrollToTop()
         else:
             self.scrollToBottom()
+
+    @contextmanager
+    def keep_scroll(self):
+        """Reload without the view moving.
+
+        load_data lands on the first or last row, which is what a new dataset
+        wants and the opposite of what a row the operator just edited or
+        deleted wants: the table would jump away from what they were reading.
+        Clamped, since the list may now be shorter than where they were.
+        """
+        bar = self.verticalScrollBar()
+        at = bar.value()
+        try:
+            yield
+        finally:
+            bar.setValue(min(at, bar.maximum()))
 
     def add_row(
         self,

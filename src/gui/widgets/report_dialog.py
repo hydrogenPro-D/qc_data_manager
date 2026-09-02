@@ -14,12 +14,12 @@ import os
 import subprocess
 import sys
 
-from PyQt6.QtCore import QSizeF, QMarginsF, QRectF, QUrl, Qt
+from PyQt6.QtCore import QSizeF, QMarginsF, QRectF, QTimer, QUrl, Qt
 from PyQt6.QtGui import (QTextDocument, QPdfWriter, QPageSize, QPageLayout,
                          QImage, QPainter, QPixmap, QColor)
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QFileDialog, QFrame, QWidget, QApplication,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QFileDialog, QFrame, QWidget, QApplication,
 )
 
 from ..styles.button_styles import (
@@ -27,6 +27,7 @@ from ..styles.button_styles import (
     SECONDARY_BUTTON_STYLE,
     apply_modern_shadow,
 )
+from ..styles.input_styles import INPUT_FIELD_STYLE
 from ..styles.table_styles import SCROLLBAR_STYLE, SCROLLBAR_VERTICAL_WIDTH
 
 # A4 portrait in points, and the margin the document is laid out inside.
@@ -34,8 +35,11 @@ A4_POINTS = QSizeF(595.0, 842.0)
 PAGE_MARGIN_MM = 14
 # The grey border around the sheets in the preview.
 DESK_MARGIN = 18
-# The buttons beside the preview.
-SIDE_PANEL_WIDTH = 220
+# The buttons beside the preview, wide enough for the title field to show a
+# whole title rather than the tail of one.
+SIDE_PANEL_WIDTH = 290
+# Keystrokes are coalesced this long before the report is rebuilt.
+TITLE_DEBOUNCE_MS = 300
 _POINTS_PER_MM = 72.0 / 25.4
 
 # The name the chart is registered under. Qt rich text resolves an <img src>
@@ -81,6 +85,11 @@ def _grouped(value) -> str:
     "Tested, passed".
     """
     return f"{value:,}".replace(",", "&nbsp;")
+
+
+def default_report_title() -> str:
+    """What the report is called unless somebody types something else."""
+    return f"HydrogenPro QC Status Report \u2013 {dt.datetime.now():%d.%m.%Y}"
 
 
 def _open_saved_file(path: str) -> None:
@@ -154,7 +163,8 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
                       chart_counts: dict[str, int] | None = None,
                       chart_colors: dict[str, str] | None = None,
                       definitions: list | None = None,
-                      chart_png: bytes | None = None) -> str:
+                      chart_png: bytes | None = None,
+                      title: str = "") -> str:
     """The whole report as one HTML document.
 
     ``production`` and ``qc`` are the two summary tables, each a list of
@@ -171,7 +181,7 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
     image itself is registered on the document by :class:`ReportDialog`, since
     Qt rich text loads images as document resources rather than from a URL.
     """
-    generated = dt.datetime.now().strftime("%d.%m.%Y")
+    heading = title.strip() or default_report_title()
 
     range_rows = "".join(
         f"<tr>"
@@ -250,14 +260,15 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
       <div>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td width="60%" valign="top">
+            <td width="54%" valign="top">
               {summary_table("Production", production, total_shown)}
               <p style="font-size:7pt; margin:10px 0 0 0;">&nbsp;</p>
               {summary_table("QC", qc, qc_total)}
             </td>
             <td width="4%">&nbsp;</td>
-            <td width="36%" valign="top">
-              <p style="font-size:9pt; margin:0 0 4px 0;"><b>Status breakdown</b></p>
+            <td width="42%" valign="top">
+              <p align="right" style="font-size:9pt; margin:0 0 4px 0;">
+                <b>Status breakdown</b></p>
               <img src="{CHART_RESOURCE}" width="{CHART_WIDTH}"
                    height="{CHART_WIDTH}" />
               {legend_table()}
@@ -334,8 +345,7 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
         return f"""
     <html><body style="font-family:'Segoe UI',Arial,sans-serif; color:#1F1F1F;
                        margin:0; padding:0;">
-      <h1 style="font-size:19pt; margin:0 0 6px 0; padding:0;">
-        HydrogenPro QC Status Report &ndash; {generated}</h1>
+      <h1 style="font-size:19pt; margin:0 0 6px 0; padding:0;">{heading}</h1>
       {scope_line}
 
       <p style="font-size:7.5pt; margin:0 0 8px 0; padding:0;"><b>Date range</b><br/>
@@ -357,9 +367,16 @@ class ReportDialog(QDialog):
 
     def __init__(self, parent=None, html: str = "",
                  suggested_name: str = "qc_report.pdf",
-                 chart_png: bytes | None = None) -> None:
+                 chart_png: bytes | None = None, rebuild=None,
+                 title: str = "") -> None:
+        """Args:
+            rebuild: ``(title) -> html``, so the title field can rebuild the
+                document rather than patch its text. Without it the field is
+                not offered at all.
+        """
         super().__init__(parent)
         self._html = html
+        self._rebuild = rebuild
         self._suggested_name = suggested_name
         # Kept as an image rather than as bytes: the preview and the PDF are
         # two separate documents, and each has to be handed the same one.
@@ -378,6 +395,19 @@ class ReportDialog(QDialog):
         apply_modern_shadow(download)
         download.clicked.connect(self._download)
 
+        self.title_input = None
+        if callable(rebuild):
+            self.title_input = QLineEdit(title or default_report_title())
+            self.title_input.setStyleSheet(INPUT_FIELD_STYLE)
+            self.title_input.setMinimumHeight(30)
+            # Coalesced, because every keystroke otherwise rebuilds the
+            # document and repaints every page.
+            self._retitle = QTimer(self)
+            self._retitle.setSingleShot(True)
+            self._retitle.setInterval(TITLE_DEBOUNCE_MS)
+            self._retitle.timeout.connect(self._apply_title)
+            self.title_input.textChanged.connect(lambda _t: self._retitle.start())
+
         close = QPushButton("Close")
         close.setMinimumHeight(38)
         close.setStyleSheet(SECONDARY_BUTTON_STYLE)
@@ -387,6 +417,13 @@ class ReportDialog(QDialog):
         side.setContentsMargins(0, 0, 0, 0)
         side.setSpacing(10)
         side.addWidget(download, 0)
+        if self.title_input is not None:
+            caption = QLabel("Title")
+            caption.setStyleSheet(
+                "color: #6B6B6B; font-size: 12px; font-weight: 600;")
+            side.addSpacing(6)
+            side.addWidget(caption, 0)
+            side.addWidget(self.title_input, 0)
         side.addStretch(1)
         side.addWidget(close, 0)
 
@@ -401,6 +438,15 @@ class ReportDialog(QDialog):
         layout.addWidget(side_panel, 1)
         self.setLayout(layout)
         self._fill_screen(self._preview_width() + SIDE_PANEL_WIDTH + 16 + 32)
+
+    def _apply_title(self) -> None:
+        """Rebuild the document under the new title and redraw the pages."""
+        try:
+            self._html = self._rebuild(self.title_input.text())
+        except Exception as e:                     # a bad title is not fatal
+            print(f"Could not apply the report title: {e}")
+            return
+        self._fill_sheets()
 
     def _printable(self) -> QSizeF:
         """The page the PDF actually prints on, margins already taken off."""
@@ -417,22 +463,14 @@ class ReportDialog(QDialog):
         Painting each page instead means what is on screen is the page, at the
         same proportions and with the same line and page breaks.
         """
-        page = self._printable()
-        document = QTextDocument()
-        self._add_chart(document)
-        document.setPageSize(page)
-        document.setHtml(self._html)
-
-        sheets = QVBoxLayout()
-        sheets.setContentsMargins(DESK_MARGIN, DESK_MARGIN, DESK_MARGIN, DESK_MARGIN)
-        sheets.setSpacing(18)
-        for index in range(document.pageCount()):
-            sheets.addWidget(self._page_label(document, page, index), 0,
-                             Qt.AlignmentFlag.AlignHCenter)
-        sheets.addStretch(1)
+        self._sheets = QVBoxLayout()
+        self._sheets.setContentsMargins(DESK_MARGIN, DESK_MARGIN,
+                                        DESK_MARGIN, DESK_MARGIN)
+        self._sheets.setSpacing(18)
+        self._fill_sheets()
 
         desk = QWidget()
-        desk.setLayout(sheets)
+        desk.setLayout(self._sheets)
         desk.setStyleSheet("background-color: #E9EAEC;")
 
         area = QScrollArea()
@@ -448,6 +486,27 @@ class ReportDialog(QDialog):
         """Exactly one page across, plus its desk and the scrollbar."""
         return (round(A4_POINTS.width() * PREVIEW_SCALE)
                 + 2 * DESK_MARGIN + SCROLLBAR_VERTICAL_WIDTH + 4)
+
+    def _fill_sheets(self) -> None:
+        """Draw the current document into the desk, replacing what was there."""
+        while self._sheets.count():
+            widget = self._sheets.takeAt(0).widget()
+            if widget is not None:
+                # Off the parent first, or the old pages keep painting until
+                # the event loop gets to them. Held in one name: unparenting it
+                # is what makes a second widget() call return None.
+                widget.setParent(None)
+                widget.deleteLater()
+
+        page = self._printable()
+        document = QTextDocument()
+        self._add_chart(document)
+        document.setPageSize(page)
+        document.setHtml(self._html)
+        for index in range(document.pageCount()):
+            self._sheets.addWidget(self._page_label(document, page, index), 0,
+                                   Qt.AlignmentFlag.AlignHCenter)
+        self._sheets.addStretch(1)
 
     @staticmethod
     def _page_label(document: QTextDocument, page: QSizeF, index: int) -> QLabel:

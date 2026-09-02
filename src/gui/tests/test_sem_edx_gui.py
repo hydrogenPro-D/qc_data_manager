@@ -17,6 +17,7 @@ from src.data_access.sem_edx.sem_edx_columns import (
     point_column,
 )
 from src.gui.sem_edx_gui import (
+    EMPTY,
     GEN4_1_LABEL,
     ImagePickerDialog,
     ImportSummaryDialog,
@@ -346,10 +347,12 @@ class TestSemEdxWidget(unittest.TestCase):
         self.assertEqual(self.widget.generations[GEN4_1_LABEL].types["ANODE"].table.rowCount(), 0)
 
     def test_a_change_in_a_type_reaches_the_tab(self) -> None:
+        """And says which generation, so only that one is re-read."""
         seen = []
-        self.widget.data_changed.connect(lambda: seen.append(True))
-        self.widget.generations[GEN4_1_LABEL].types["CATHODE"].data_changed.emit()
-        self.assertEqual(len(seen), 1)
+        self.widget.data_changed.connect(seen.append)
+        self.widget.generations[GEN4_1_LABEL].types["CATHODE"].data_changed.emit(
+            GEN4_1_LABEL)
+        self.assertEqual(seen, [GEN4_1_LABEL])
 
     def test_one_import_button_serves_both_types(self) -> None:
         """A folder's type is looked up, not chosen, so the button belongs to
@@ -364,15 +367,15 @@ class TestSemEdxWidget(unittest.TestCase):
         not heard of the electrode, and which captures belong to the sample."""
         asked = []
         self.widget.generations[GEN4_1_LABEL].on_import_folder = (
-            lambda generation, folder, ask_type, pick:
+            lambda generation, folder, ask_type, pick, confirm, positions:
             asked.append((generation, folder, callable(ask_type),
-                          callable(pick)))
+                          callable(pick), callable(confirm), positions))
             or (_ParsedStub(), []))
         with patch("src.gui.sem_edx_gui.QFileDialog.getExistingDirectory",
                    return_value=r"C:\results\B14050"), \
                 patch("src.gui.sem_edx_gui.ImportSummaryDialog"):
             self.widget.generations[GEN4_1_LABEL]._on_add_clicked()
-        self.assertEqual(asked, [(GEN4_1_LABEL, r"C:\results\B14050", True, True)])
+        self.assertEqual(asked, [(GEN4_1_LABEL, r"C:\results\B14050", True, True, True, None)])
 
     def test_a_cancelled_picker_keeps_the_suggestion(self) -> None:
         with patch("src.gui.sem_edx_gui.ImagePickerDialog") as dialog:
@@ -389,47 +392,49 @@ class TestSemEdxWidget(unittest.TestCase):
                 "B14050", "top right", [], ["a.tif"])
         self.assertEqual(picked, ["a.tif", "b.tif"])
 
-    def test_the_operator_is_asked_for_and_stamped_on_what_was_imported(self) -> None:
-        """Nothing in the export names them, so the summary collects it once
-        and applies it to everything just added."""
+    def test_the_operator_is_answered_before_anything_is_written(self) -> None:
+        """Asked as part of the import rather than patched on after it, so a
+        sample is never on screen with no name against it."""
         result = _ParsedStub()
         result.measurements = [_Measured("B14134", "top right") for _ in range(3)]
-        self.widget.generations[GEN4_1_LABEL].on_import_folder = lambda *_a: (result, [])
-
-        saved = []
-        self.widget.generations[GEN4_1_LABEL].on_update_sample = (
-            lambda g, e, p, values: saved.append((g, e, p, values)))
-
-        with patch("src.gui.sem_edx_gui.QFileDialog.getExistingDirectory",
-                   return_value=r"C:\results\B14134"), \
-                patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
+        with patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
             dialog.return_value.operator = "Tamas Pakai"
-            # The zoom and the note are optional, and an untouched dialog hands
-            # back empty ones. A mock would otherwise hand back a truthy object
-            # and they would be sent as if somebody had typed them.
+            # The zoom, the note and the back button all read false on an
+            # untouched dialog. A mock would otherwise hand back truthy objects,
+            # so the fields would be sent as if typed and the import would be
+            # read as having been sent back for another go at the captures.
             dialog.return_value.zoom = ""
             dialog.return_value.note = ""
-            self.widget.generations[GEN4_1_LABEL]._on_add_clicked()
-
-        # Once per sample, not once per measurement, and only what was filled in.
-        self.assertEqual(saved, [(GEN4_1_LABEL, "B14134", "top right",
-                                  {str(SemEdxColumns.OPERATOR): "Tamas Pakai"})])
+            dialog.return_value.back = False
+            values = self.widget.generations[GEN4_1_LABEL]._confirm_import(
+                result, [], "B14134")
+        self.assertEqual(values, {str(SemEdxColumns.OPERATOR): "Tamas Pakai"})
         self.assertTrue(dialog.call_args.kwargs["ask_operator"])
 
     def test_an_empty_operator_stamps_nothing(self) -> None:
         result = _ParsedStub()
         result.measurements = [_Measured("B14134", "top right")]
-        self.widget.generations[GEN4_1_LABEL].on_import_folder = lambda *_a: (result, [])
-
-        saved = []
-        self.widget.generations[GEN4_1_LABEL].on_update_sample = (
-            lambda *args: saved.append(args))
-        with patch("src.gui.sem_edx_gui.QFileDialog.getExistingDirectory",
-                   return_value=r"C:\results\B14134"), \
-                patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
+        with patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
             dialog.return_value.operator = ""
-            self.widget.generations[GEN4_1_LABEL]._on_add_clicked()
-        self.assertEqual(saved, [])
+            dialog.return_value.zoom = ""
+            dialog.return_value.note = ""
+            dialog.return_value.back = False
+            values = self.widget.generations[GEN4_1_LABEL]._confirm_import(
+                result, [], "B14134")
+        self.assertEqual(values, {})
+
+    def test_refusing_the_confirmation_writes_nothing(self) -> None:
+        """Cancel there means the folder is not imported at all, rather than
+        imported and then left without a name."""
+        generation = self.widget.generations[GEN4_1_LABEL]
+        result = _ParsedStub()
+        result.measurements = [_Measured("B14134", "top right")]
+        with patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
+            dialog.return_value.back = False
+            generation._cancelled = True
+            values = generation._confirm_import(result, [], "B14134")
+        self.assertIsNone(values)
+        self.assertIs(generation._confirmed, False)
 
     def test_the_operator_is_not_asked_for_when_nothing_was_added(self) -> None:
         self.widget.generations[GEN4_1_LABEL].on_import_folder = lambda *_a: (_ParsedStub(), [])
@@ -448,7 +453,7 @@ class TestSemEdxWidget(unittest.TestCase):
             pd.DataFrame([sample(electrode="B14050", electrode_type="CATHODE")]),
             "CATHODE", GEN4_1_LABEL)
 
-        generation._reveal([("B14050", "top right")], {"B14050": "CATHODE"})
+        generation.reveal([("B14050", "top right")], {"B14050": "CATHODE"})
         self.assertIs(generation.sub_tabs.currentWidget(),
                       generation.types["CATHODE"])
 
@@ -461,7 +466,7 @@ class TestSemEdxWidget(unittest.TestCase):
     def test_an_unresolved_type_switches_to_nothing(self) -> None:
         generation = self.widget.generations[GEN4_1_LABEL]
         before = generation.sub_tabs.currentWidget()
-        generation._reveal([("B99999", "top right")], {})
+        generation.reveal([("B99999", "top right")], {})
         self.assertIs(generation.sub_tabs.currentWidget(), before)
 
     def test_the_summary_carries_no_report_notes(self) -> None:
@@ -469,8 +474,9 @@ class TestSemEdxWidget(unittest.TestCase):
         result = _ParsedStub()
         result.measurements = [_Measured("B14134", "top right")]
         _title, lines = self.widget.generations[GEN4_1_LABEL]._import_summary(result, [], "B14134")
-        self.assertEqual(len(lines), 1)
-        self.assertIn("Added 1 measurements", lines[0])
+        # Which sample it is, and nothing else: no count, and none of the
+        # report's own notes.
+        self.assertEqual(lines, ["Sample: B14134, top right"])
 
     def test_a_cancelled_folder_dialog_imports_nothing(self) -> None:
         asked = []
@@ -507,13 +513,6 @@ class TestSemEdxWidget(unittest.TestCase):
             dialog.return_value.exec.return_value = QDialog.DialogCode.Rejected
             self.assertEqual(
                 self.widget.generations[GEN4_1_LABEL]._ask_type("B99999", ["ANODE", "CATHODE"]), "")
-
-    def test_the_summary_names_what_was_added(self) -> None:
-        result = _ParsedStub()
-        result.measurements = [_Measured("B14050", "top right")]
-        title, lines = self.widget.generations[GEN4_1_LABEL]._import_summary(result, [], "B14050")
-        self.assertEqual(title, "Imported")
-        self.assertIn("B14050 top right", lines[0])
 
     def test_the_type_gets_a_row_of_its_own(self) -> None:
         """It is looked up rather than chosen, so it also tells you which tab
@@ -619,6 +618,32 @@ class TestSampleDialog(unittest.TestCase):
 
     def _column(self, dialog, name: str) -> int:
         return list(dialog._detail.columns).index(name)
+
+    def test_a_reading_never_taken_does_not_block_the_save(self) -> None:
+        """It shows as an em dash, and an untouched cell hands that dash back.
+
+        Read as a typo it made any sample with a missing reading impossible to
+        save, even when the only edit was to the note.
+        """
+        detail = pd.DataFrame([
+            {str(SemEdxColumns.MEASUREMENT): 1, self.NI: 35.1, self.S: None},
+            {str(SemEdxColumns.MEASUREMENT): 2, self.NI: 32.3, self.S: 9.1},
+        ])
+        dialog = SemSampleDialog(
+            None, names=QuantityNames(["Ni", "S"]), electrode="B14744",
+            position="top right", measurements=detail)
+        column = self._column(dialog, self.S)
+        self.assertEqual(dialog.table.item(0, column).text(), EMPTY)
+
+        edited, problems = dialog._read_measurements()
+        self.assertEqual(problems, [])
+        self.assertIsNone(edited[1][self.S])
+        self.assertEqual(edited[2][self.S], 9.1)
+
+        # A real typo is still a typo.
+        dialog.table.item(0, column).setText("oops")
+        _edited, problems = dialog._read_measurements()
+        self.assertEqual(len(problems), 1)
 
     def test_percentages_are_editable_and_ratios_are_not(self) -> None:
         """A percentage was read off the instrument; a ratio is arithmetic."""

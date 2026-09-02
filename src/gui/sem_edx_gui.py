@@ -24,12 +24,14 @@ workbook does. Double clicking a row opens the sample on its own.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame, QDialog,
     QPushButton, QScrollArea, QLineEdit, QFileDialog, QListWidget,
     QListWidgetItem, QTableWidget, QTableWidgetItem, QApplication,
+    QStyledItemDelegate, QProgressBar,
 )
 from PyQt6.QtCore import (
     Qt, QEvent, QObject, QSize, pyqtSignal,
@@ -49,7 +51,8 @@ from .styles.button_styles import (
 from .styles.input_styles import COMBO_BOX_STYLE, INPUT_FIELD_STYLE
 from .styles.tab_styles import create_styled_container_layout, PLOT_TABS_STYLE
 from .widgets.data_table_widget import DataTableWidget, CellStyle
-from .widgets.table_delegates import RowHighlight, RowHighlightDelegate
+from .widgets.table_delegates import (RowFlasher, RowHighlight,
+                                      RowHighlightDelegate)
 from .widgets.error_dialogs import (
     ConfirmationDialog,
     ValidationErrorScrollDialog,
@@ -58,6 +61,8 @@ from .widgets.error_dialogs import (
 from .widgets.filter_bar_widget import FilterBarWidget, FilterDropdown
 from .widgets.no_wheel_tabs import NoWheelTabWidget
 from .widgets.no_scroll_inputs import NoScrollComboBox
+from .widgets.frozen_columns import FrozenColumns
+from .widgets.busy_spinner import BusySpinner
 from .widgets.skeleton_overlay import SkeletonOverlay
 from src.data_access.electrodes.status_propagation import electrode_number
 from src.data_access.sem_edx.sem_edx_columns import (
@@ -126,6 +131,10 @@ DERIVED_CELL_TEXT = "#6B7280"
 PICKER_LIST_STYLE = """
     QListWidget {
         background-color: #FFFFFF;
+        /* Banded rows, so a list six hundred long reads as rows rather than a
+           wall of text. Only takes effect where the view asks for it with
+           setAlternatingRowColors. */
+        alternate-background-color: #F6F8FA;
         border: 1px solid #E5E7EB;
         border-radius: 8px;
         font-family: 'Segoe UI', Arial, sans-serif;
@@ -140,12 +149,35 @@ PICKER_LIST_STYLE = """
         margin: 3px 2px;
         padding: 0px 10px;
         color: #1F1F1F;
+        /* Reserved, not decoration: hover and selection both draw a border,
+           and without the space held open the text shifts a pixel when the
+           mouse arrives. Deliberately NO background here, which would paint
+           over the banding. */
+        border: 1px solid transparent;
     }
-    QListWidget::item:hover { background-color: #F0FDFA; }
+    /* An outline rather than another wash. The bands already own the
+       background, and a second colour on top of them read as noise. */
+    QListWidget::item:hover { border: 1px solid #55BDBD; }
     QListWidget::item:selected {
         background-color: #CCF3EF;
         color: #0F766E;
         border: 1px solid #55BDBD;
+    }
+"""
+
+# The batch import strip along the bottom of each import dialog. Thin and
+# quiet: it reports on work the operator started and already expects, so it
+# should not be the loudest thing on screen.
+IMPORT_PROGRESS_LABEL_STYLE = "font-size: 12px; color: #64748B;"
+IMPORT_PROGRESS_STYLE = """
+    QProgressBar {
+        background-color: #E5E7EB;
+        border: none;
+        border-radius: 4px;
+    }
+    QProgressBar::chunk {
+        background-color: #14B8A6;
+        border-radius: 4px;
     }
 """
 
@@ -325,6 +357,91 @@ def _describe_types(types: dict[str, str], electrodes: list[str]) -> str:
     return ", ".join(f"{e} {type_label(t).rstrip('s').lower()}" for e, t in known)
 
 
+class ImportCancelled(Exception):
+    """Raised out of a prompt when the operator stops the import.
+
+    Thrown rather than returned so it unwinds the whole folder: the backend
+    writes nothing until every question is answered, so a cancel part way
+    through leaves that folder untouched instead of half filed.
+    """
+
+
+class _NoDismiss(QObject):
+    """Eats Escape and the window close, so a question has to be answered.
+
+    Closing these used to count as an answer: the capture picker fell back to
+    its filename guess and the summary threw the operator away. Now the only
+    ways out are answering or the Cancel in the footer, which is explicit.
+    """
+
+    def eventFilter(self, _watched, event) -> bool:  # noqa: N802 (Qt naming)
+        if event.type() == QEvent.Type.Close:
+            event.ignore()
+            return True
+        return (event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Escape)
+
+
+def import_footer(done: int, total: int, on_cancel) -> QWidget:
+    """The strip along the bottom of every dialog an import raises.
+
+    Carries the Cancel, always, because nothing else can dismiss these now.
+    The count and the bar come along only for a batch: reporting "1 of 1" says
+    nothing worth the room.
+    """
+    strip = QWidget()
+    strip.setObjectName("importFooter")
+    # Scoped by name, or the rule cascades onto the button inside it.
+    strip.setStyleSheet(
+        "#importFooter { border-top: 1px solid #E5E7EB; background: transparent; }")
+    row = QHBoxLayout(strip)
+    row.setSpacing(10)
+
+    if total > 1 and done > 0:
+        label = QLabel(f"Importing {done} of {total}")
+        label.setStyleSheet(IMPORT_PROGRESS_LABEL_STYLE)
+        bar = QProgressBar()
+        bar.setFixedHeight(8)
+        bar.setTextVisible(False)
+        bar.setRange(0, total)
+        bar.setValue(done)
+        bar.setStyleSheet(IMPORT_PROGRESS_STYLE)
+        row.addWidget(label, 0)
+        row.addWidget(bar, 1)
+    else:
+        row.addStretch(1)
+
+    cancel = QPushButton("Cancel import")
+    cancel.setMinimumHeight(30)
+    cancel.setStyleSheet(SECONDARY_BUTTON_STYLE)
+    cancel.clicked.connect(on_cancel)
+    row.addWidget(cancel, 0)
+    return strip
+
+
+@contextmanager
+def asking():
+    """Put the busy cursor away for as long as a dialog is asking something.
+
+    An import runs under a wait cursor, and it calls back into the GUI to ask
+    which type an electrode is and which captures belong to a sample. Without
+    this the operator reads a question with a spinner on the pointer, which
+    reads as a window that has hung rather than one waiting for them.
+
+    The shape is remembered rather than assumed, so this restores whatever was
+    actually set instead of forcing a wait cursor onto a caller that had none.
+    """
+    cursor = QApplication.overrideCursor()
+    shape = cursor.shape() if cursor is not None else None
+    if shape is not None:
+        QApplication.restoreOverrideCursor()
+    try:
+        yield
+    finally:
+        if shape is not None:
+            QApplication.setOverrideCursor(shape)
+
+
 def report(parent, title: str, lines: list[str], error: bool = False) -> None:
     """One place for every message this tab shows.
 
@@ -347,7 +464,7 @@ class ImagePickerDialog(QDialog):
     """
 
     def __init__(self, parent=None, electrode: str = "", position: str = "",
-                 images: list | None = None) -> None:
+                 images: list | None = None, preselected=None) -> None:
         super().__init__(parent)
         self._paths = [Path(p) for p in (images or [])]
         self.chosen: list[str] = []
@@ -367,15 +484,23 @@ class ImagePickerDialog(QDialog):
         self.list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self.list.setStyleSheet(PICKER_LIST_STYLE + SLIM_SCROLLBAR_STYLE)
         self.list.setFrameShape(QFrame.Shape.NoFrame)
+        self.list.setAlternatingRowColors(True)
 
         # Nothing chosen to begin with. Guessing from the filenames and
         # pre-selecting would be taken as read, and the guess is wrong often
         # enough that it is worth making someone look.
+        #
+        # An earlier ANSWER is different from a guess. Coming back through
+        # "Choose captures again", what was ticked before is ticked again, so
+        # correcting one row does not mean picking the other four afresh.
+        already = {str(name).strip().lower() for name in (preselected or [])}
         for number, path in enumerate(self._paths, start=1):
             item = QListWidgetItem(f"{number}     {path.name}")
             item.setData(Qt.ItemDataRole.UserRole, path.name)
             item.setSizeHint(QSize(0, 34))
             self.list.addItem(item)
+            if path.name.lower() in already:
+                item.setSelected(True)
 
         self.counter = QLabel()
         self.counter.setStyleSheet("color: #6B6B6B; font-size: 12px; font-weight: 600;")
@@ -401,8 +526,8 @@ class ImagePickerDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        buttons.addWidget(select_all, 0)
         buttons.addWidget(select_none, 0)
+        buttons.addWidget(select_all, 0)
         buttons.addStretch(1)
         buttons.addWidget(self.counter, 0)
         buttons.addSpacing(10)
@@ -694,8 +819,8 @@ class ManualSampleDialog(QDialog):
         problems: list = []
         for (point, symbol), field in self._inputs.items():
             text = field.text().strip().replace(",", ".")
-            if not text:
-                continue
+            if not text or text == EMPTY:
+                continue        # never taken, the same as leaving it blank
             try:
                 readings.setdefault(point, {})[symbol] = float(text)
             except ValueError:
@@ -738,6 +863,226 @@ class ManualSampleDialog(QDialog):
         self.accept()
 
 
+IMPORT_PICKER_TITLE = "Add SEM results"
+# One row of the picker names one electrode, so these are singular, unlike
+# TYPE_LABELS above which names a tab holding many. Anything else is shown as
+# it is stored rather than mangled by a general rule: MM1 is not "Mm1".
+ROW_TYPE_LABELS = {"ANODE": "Anode", "CATHODE": "Cathode"}
+# Where the type and the spot are kept on a row, beside the folder path
+# already on UserRole.
+TYPE_ROLE = Qt.ItemDataRole.UserRole + 1
+LOCATION_ROLE = Qt.ItemDataRole.UserRole + 2
+# The spot exactly as the report named it, which is what the import filters on.
+SPOT_ROLE = Qt.ItemDataRole.UserRole + 3
+
+
+class _RowTypeDelegate(QStyledItemDelegate):
+    """Draws the spot and the electrode type along a picker row.
+
+    Two more columns in all but name. Painted rather than folded into the item
+    text because the font is proportional, so padding with spaces would leave
+    them in a ragged line down the list.
+    """
+
+    COLOR = "#64748B"
+    INSET = 14
+    # Where the spot starts, as a fraction of the row. Markings are short and
+    # of similar length, so a fixed stop lines them all up.
+    SPOT_AT = 0.42
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        spot = str(index.data(LOCATION_ROLE) or "")
+        kind = str(index.data(TYPE_ROLE) or "")
+        if not spot and not kind:
+            return
+        painter.save()
+        painter.setPen(QColor(self.COLOR))
+        if spot:
+            painter.drawText(
+                option.rect.adjusted(int(option.rect.width() * self.SPOT_AT), 0, 0, 0),
+                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                spot)
+        if kind:
+            painter.drawText(
+                option.rect.adjusted(0, 0, -self.INSET, 0),
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                kind)
+        painter.restore()
+
+
+class ImportPickerDialog(QDialog):
+    """Which result folders to import, one tab per generation.
+
+    Instead of a file explorer. The library is found the same way opening a
+    capture finds it, so nobody has to know where OneDrive put it, and only
+    folders the database holds nothing from are listed: what is left to do is
+    the point of the window.
+
+    Ticking rows in both tabs at once is allowed. Each folder is imported
+    under the generation whose tab it came from, not the tab the button
+    happened to be pressed on.
+    """
+
+    def __init__(self, parent=None, generations: list[str] | None = None,
+                 candidates: dict[str, list] | None = None,
+                 current: str = "") -> None:
+        super().__init__(parent)
+        self.chosen: list[tuple[str, str]] = []
+        self.browse = False
+        self._lists: dict[str, QListWidget] = {}
+        self._counts: dict[str, QLabel] = {}
+
+        self.setWindowTitle(IMPORT_PICKER_TITLE)
+        self.setMinimumSize(640, 580)
+        self.setStyleSheet("QDialog { background-color: #FFFFFF; }")
+
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(build_header("+", IMPORT_PICKER_TITLE, "#14B8A6"))
+
+        body = QVBoxLayout()
+        body.setContentsMargins(20, 14, 20, 18)
+        body.setSpacing(10)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search")
+        self.search.setStyleSheet(INPUT_FIELD_STYLE)
+        self.search.textChanged.connect(self._filter)
+        body.addWidget(self.search, 0)
+
+        self.tabs = NoWheelTabWidget(fade_ms=0)
+        self.tabs.setStyleSheet(PLOT_TABS_STYLE)
+        for generation in (generations or []):
+            rows = (candidates or {}).get(generation) or []
+            self.tabs.addTab(self._page(generation, rows), generation)
+        body.addWidget(self.tabs, 1)
+
+        buttons = QHBoxLayout()
+        browse = QPushButton("Browse instead")
+        browse.setMinimumHeight(34)
+        browse.setStyleSheet(SECONDARY_BUTTON_STYLE)
+        browse.clicked.connect(self._on_browse)
+        cancel = QPushButton("Cancel")
+        cancel.setMinimumHeight(34)
+        cancel.setStyleSheet(SECONDARY_BUTTON_STYLE)
+        cancel.clicked.connect(self.reject)
+        self.import_button = QPushButton("Import")
+        self.import_button.setMinimumHeight(34)
+        self.import_button.setStyleSheet(PRIMARY_BUTTON_STYLE)
+        self.import_button.setEnabled(False)
+        self.import_button.clicked.connect(self._on_import)
+        buttons.addWidget(browse, 0)
+        buttons.addStretch(1)
+        buttons.addWidget(cancel, 0)
+        buttons.addWidget(self.import_button, 0)
+        body.addLayout(buttons)
+
+        outer.addLayout(body, 1)
+        self.setLayout(outer)
+
+        # Open on the tab they were already looking at.
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index) == str(current or "").strip():
+                self.tabs.setCurrentIndex(index)
+                break
+        self._update_counts()
+
+    def _page(self, generation: str, rows: list) -> QWidget:
+        """One generation's list of folders still to import."""
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(8)
+
+        count = QLabel()
+        count.setStyleSheet(
+            "font-size: 12px; color: #64748B; padding: 2px 0 0 6px;")
+
+        listing = QListWidget()
+        # Multi rather than extended, so a plain click toggles one row instead
+        # of clearing every other, the same as the capture picker.
+        listing.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        listing.setStyleSheet(PICKER_LIST_STYLE + SLIM_SCROLLBAR_STYLE)
+        listing.setFrameShape(QFrame.Shape.NoFrame)
+        listing.setAlternatingRowColors(True)
+        listing.setItemDelegate(_RowTypeDelegate(listing))
+        listing.itemSelectionChanged.connect(self._update_counts)
+        for row in rows:
+            item = QListWidgetItem(str(row.get("name", "")))
+            item.setData(Qt.ItemDataRole.UserRole, str(row.get("path", "")))
+            stored = str(row.get("type", "") or "").strip()
+            item.setData(TYPE_ROLE, ROW_TYPE_LABELS.get(stored.upper(), stored))
+            # Lower cased for the eye only. What the import is asked for is the
+            # spot as the report named it, kept on the item below.
+            spot = str(row.get("position", "") or "").strip()
+            item.setData(LOCATION_ROLE, spot.lower())
+            item.setData(SPOT_ROLE, spot)
+            item.setSizeHint(QSize(0, 34))
+            listing.addItem(item)
+        if not rows:
+            empty = QListWidgetItem("Everything here is already imported.")
+            empty.setFlags(Qt.ItemFlag.NoItemFlags)
+            listing.addItem(empty)
+
+        layout.addWidget(count, 0)
+        layout.addWidget(listing, 1)
+        page.setLayout(layout)
+        self._lists[generation] = listing
+        self._counts[generation] = count
+        return page
+
+    def _filter(self) -> None:
+        """Show only rows matching the search, in every tab."""
+        needle = self.search.text().strip().lower()
+        for listing in self._lists.values():
+            for index in range(listing.count()):
+                item = listing.item(index)
+                if item.flags() == Qt.ItemFlag.NoItemFlags:
+                    continue
+                # The type counts as part of the row, so "anode" narrows the
+                # list even though it is painted rather than in the text.
+                haystack = (f"{item.text()} {item.data(TYPE_ROLE) or ''} "
+                            f"{item.data(LOCATION_ROLE) or ''}").lower()
+                hide = bool(needle) and needle not in haystack
+                # Dropping the selection with the row, so nothing is imported
+                # that the operator has filtered out of sight.
+                if hide and item.isSelected():
+                    item.setSelected(False)
+                item.setHidden(hide)
+
+    def _update_counts(self) -> None:
+        """Keep each tab's caption and the Import button honest."""
+        total = 0
+        for generation, listing in self._lists.items():
+            rows = sum(1 for index in range(listing.count())
+                       if listing.item(index).flags() != Qt.ItemFlag.NoItemFlags)
+            picked = len(listing.selectedItems())
+            total += picked
+            caption = f"{rows} not imported"
+            if picked:
+                caption += f", {picked} selected"
+            self._counts[generation].setText(caption)
+        self.import_button.setEnabled(total > 0)
+        self.import_button.setText(f"Import {total}" if total else "Import")
+
+    def _on_browse(self) -> None:
+        """Fall back to the file explorer, for a folder filed somewhere odd."""
+        self.browse = True
+        self.accept()
+
+    def _on_import(self) -> None:
+        """Every ticked row, from every tab, with the generation it came from."""
+        for generation, listing in self._lists.items():
+            for item in listing.selectedItems():
+                path = str(item.data(Qt.ItemDataRole.UserRole) or "")
+                if path:
+                    self.chosen.append(
+                        (generation, path, str(item.data(SPOT_ROLE) or "")))
+        self.accept()
+
+
 class ImportSummaryDialog(QDialog):
     """What an import did, and the one field it could not fill in.
 
@@ -747,11 +1092,14 @@ class ImportSummaryDialog(QDialog):
 
     def __init__(self, parent=None, title: str = "", lines: list[str] | None = None,
                  ask_operator: bool = False, error: bool = False,
-                 zoom_hint: str = "") -> None:
+                 zoom_hint: str = "", allow_back: bool = False,
+                 operator_hint: str = "", note_hint: str = "") -> None:
         super().__init__(parent)
         self.operator: str = ""
         self.zoom: str = ""
         self.note: str = ""
+        # Set when the operator wants to answer the capture question again.
+        self.back = False
 
         self.setWindowTitle(title)
         self.setMinimumWidth(560)
@@ -790,12 +1138,16 @@ class ImportSummaryDialog(QDialog):
 
         if ask_operator:
             self.operator_input = self._field("", self._on_accept)
+            # Kept across a trip back to the captures: retyping a name and a
+            # note because one capture was wrong is a poor trade.
+            self.operator_input.setText(operator_hint)
             # Filled in with what the import read off the image sidecars, as
             # real text rather than a hint: a placeholder disappears the moment
             # anything is typed, taking the answer with it.
             self.zoom_input = self._field("", self._on_accept)
             self.zoom_input.setText(zoom_hint)
             self.note_input = self._field("", self._on_accept)
+            self.note_input.setText(note_hint)
 
             fields = QGridLayout()
             fields.setContentsMargins(0, 0, 0, 0)
@@ -821,12 +1173,26 @@ class ImportSummaryDialog(QDialog):
             # Held shut until a name is typed: the operator is the one thing
             # the export cannot supply, and it is far easier to enter now than
             # to notice the blank column later.
-            self.ok_button.setEnabled(False)
+            # From what is in the box, not simply shut: coming back from the
+            # captures the name is already there, and a disabled OK beside a
+            # filled-in field reads as the window being stuck.
+            self.ok_button.setEnabled(bool(self.operator_input.text().strip()))
             self.ok_button.setToolTip("Enter the operator name first")
             self.operator_input.textChanged.connect(
                 lambda text: self.ok_button.setEnabled(bool(text.strip())))
 
         buttons = QHBoxLayout()
+        if allow_back:
+            # The captures are chosen several dialogs earlier and only named
+            # here, so this is the first place a wrong choice is visible.
+            #
+            # Left, and away from OK: going back is the opposite direction to
+            # finishing, and the two should not sit under the same thumb.
+            back_button = QPushButton("Choose captures again")
+            back_button.setMinimumHeight(38)
+            back_button.setStyleSheet(SECONDARY_BUTTON_STYLE)
+            back_button.clicked.connect(self._on_back)
+            buttons.addWidget(back_button, 0)
         buttons.addStretch(1)
         buttons.addWidget(self.ok_button, 0)
         body.addLayout(buttons, 0)
@@ -840,6 +1206,19 @@ class ImportSummaryDialog(QDialog):
 
         if self.operator_input is not None:
             self.operator_input.setFocus()
+
+    def _on_back(self) -> None:
+        """Answer nothing, and ask for the folder to be read again.
+
+        What is in the boxes is still taken, so it can be put back when this
+        window comes round again. Unlike OK, an empty one is fine here.
+        """
+        if self.operator_input is not None:
+            self.operator = self.operator_input.text().strip()
+            self.zoom = self.zoom_input.text().strip() if self.zoom_input else ""
+            self.note = self.note_input.text().strip() if self.note_input else ""
+        self.back = True
+        self.done(QDialog.DialogCode.Rejected)
 
     @staticmethod
     def _caption(text: str) -> QLabel:
@@ -1034,7 +1413,7 @@ class SemSampleDialog(QDialog):
     the rest that a folder happened not to contain.
     """
 
-    def __init__(self, parent=None, names: QuantityNames | None = None,
+    def __init__(self, parent=None, names: QuantityNames | None = None, on_save=None,
                  electrode: str = "", position: str = "", electrode_type: str = "",
                  operator: str = "", zoom: str = "", note: str = "", date: str = "",
                  measurements: pd.DataFrame | None = None) -> None:
@@ -1044,6 +1423,10 @@ class SemSampleDialog(QDialog):
         self.measurements: dict[int, dict[str, float | None]] = {}
         # Set instead of the two above when Delete was pressed and confirmed.
         self.delete = False
+        # ``() -> bool``, the write and the re-read. Given one, this window
+        # stays open and busy until it comes back, so the table behind it is
+        # already up to date the moment the window goes.
+        self.on_save = on_save
         self._electrode, self._position = electrode, position
         names = names or QuantityNames()
 
@@ -1108,12 +1491,16 @@ class SemSampleDialog(QDialog):
             f"Delete {electrode} {position} and every measurement on it")
         delete_button.clicked.connect(self._on_delete)
 
+        self.spinner = BusySpinner(self)
+        self._buttons = (save_button, cancel_button, delete_button)
+
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
         # Away from Save, on the other side of the stretch, so the destructive
         # one is never the button next to the one you meant to press.
         buttons.addWidget(delete_button, 0)
         buttons.addStretch(1)
+        buttons.addWidget(self.spinner, 0)
         buttons.addWidget(cancel_button, 0)
         buttons.addWidget(save_button, 0)
 
@@ -1202,6 +1589,12 @@ class SemSampleDialog(QDialog):
         A blank cell is a reading that was never taken, which is different from
         a nonsense one: the first is stored as missing, the second refuses to
         save so nobody loses a figure to a typo.
+
+        THE PLACEHOLDER COUNTS AS BLANK. A reading that was never taken is
+        shown as an em dash, so an untouched cell hands back that dash rather
+        than an empty string. Read as a typo, it made a sample with any missing
+        reading impossible to save at all, including when the only thing being
+        changed was the note.
         """
         columns = [str(c) for c in self._detail.columns]
         point_column = str(SemEdxColumns.MEASUREMENT)
@@ -1217,7 +1610,7 @@ class SemSampleDialog(QDialog):
                     continue
                 cell = self.table.item(row, index)
                 text = (cell.text() if cell else "").strip()
-                if not text:
+                if not text or text == EMPTY:
                     edited.setdefault(point, {})[column] = None
                     continue
                 number = _as_number(text)
@@ -1230,7 +1623,13 @@ class SemSampleDialog(QDialog):
         return edited, problems
 
     def _on_save(self) -> None:
-        """Nothing is saved unless every corrected figure is a number."""
+        """Nothing is saved unless every corrected figure is a number.
+
+        With an ``on_save`` the window stays up and turns its spinner while the
+        write and the re-read happen, and closes only once the table behind it
+        holds the new figures. Without one it simply closes, and the caller
+        does the work afterwards.
+        """
         self.measurements, problems = self._read_measurements()
         if problems:
             self.measurements = {}
@@ -1238,7 +1637,41 @@ class SemSampleDialog(QDialog):
             return
         self.values = {column: field.text().strip()
                        for column, field in self._inputs.items()}
-        self.accept()
+        if not callable(self.on_save):
+            self.accept()
+            return
+
+        self._set_busy(True)
+        try:
+            outcome = self.on_save()
+        except Exception:
+            self._set_busy(False)
+            raise
+        # None means it was only started, and saved() will finish it. That is
+        # the case that lets the spinner turn: this thread goes back to the
+        # event loop instead of blocking on a database.
+        if outcome is None:
+            return
+        self.saved(bool(outcome))
+
+    def saved(self, ok: bool) -> None:
+        """Finish a save started by ``on_save``. Called on the UI thread.
+
+        On failure the window stays open with everything still typed into it,
+        and whatever went wrong has already been reported by the caller.
+        """
+        self._set_busy(False)
+        if ok:
+            self.accept()
+
+    def _set_busy(self, busy: bool) -> None:
+        """Turn the spinner and shut the buttons, or put both back."""
+        for button in self._buttons:
+            button.setEnabled(not busy)
+        self.spinner.start() if busy else self.spinner.stop()
+        # One pass so the spinner and the greyed buttons are on screen before
+        # anything else happens, whether or not the work blocks this thread.
+        QApplication.processEvents()
 
     def _on_delete(self) -> None:
         """Delete the whole sample, once. There is no undo on this tab, so the
@@ -1268,12 +1701,15 @@ class SemEdxTypeWidget(QWidget):
     """
 
     # An import or an edit changed the stored measurements; whoever owns the
-    # backend re-reads and hands the frames back.
-    data_changed = pyqtSignal()
+    # backend re-reads and hands the frames back. Carries the generation, so
+    # editing a Gen 4.1 sample does not re-read four hundred Gen 3.1 rows that
+    # cannot have changed.
+    data_changed = pyqtSignal(str)
 
     def __init__(self, parent=None, generation: str = "", electrode_type: str = "",
                  layout: list[str] | None = None, on_get_measurements=None,
                  on_update_sample=None, on_update_measurements=None,
+                 on_save_sample=None,
                  on_delete_sample=None, on_list_images=None,
                  on_images_available=None) -> None:
         super().__init__(parent)
@@ -1288,6 +1724,9 @@ class SemEdxTypeWidget(QWidget):
         # ``(generation, electrode, position, {point: {column: value}}) -> bool``,
         # a corrected percentage on one point.
         self.on_update_measurements = on_update_measurements
+        # The whole save handed over in one piece, so it can run off the UI
+        # thread. Absent, the two callables above are used here instead.
+        self.on_save_sample = on_save_sample
         # ``(generation, electrode, position) -> bool``, the whole sample gone.
         self.on_delete_sample = on_delete_sample
         # ``folder -> [image path, ...]``, so the tab never walks a directory.
@@ -1367,9 +1806,16 @@ class SemEdxTypeWidget(QWidget):
         # pointer, a thicker one on the row that was clicked. This table paints
         # its cells the ordinary way, so the delegate only adds the outline.
         self._row_highlight = RowHighlight()
+        # Same wash the Electrodes tab uses when a row changes underneath you.
+        self._flasher = None
         self._picked_key: tuple = ()
         self.table.setItemDelegate(
             RowHighlightDelegate(self._row_highlight, self.table))
+        self._flasher = RowFlasher(self._row_highlight, self.table, self)
+        # The electrode and where the sample came from stay put while the
+        # measurements scroll past. Transparent to the mouse, so hovering,
+        # picking and double-clicking below still reach the table itself.
+        self._frozen = FrozenColumns(self.table)
         self.table.setMouseTracking(True)
         self.table.cellEntered.connect(self._on_cell_entered)
         self.table.cellClicked.connect(self._on_cell_clicked)
@@ -1395,7 +1841,7 @@ class SemEdxTypeWidget(QWidget):
                 self.table.resize_columns_to_contents_constrained()
             elif event.type() == QEvent.Type.Leave:
                 self._row_highlight.hover_row = -1
-                self.table.viewport().update()
+                self._repaint_rows()
         return super().eventFilter(obj, event)
 
     # ------------------------------------------------------------------
@@ -1413,11 +1859,20 @@ class SemEdxTypeWidget(QWidget):
         return (str(sample[str(SemEdxColumns.ELECTRODE)]).strip(),
                 str(sample[str(SemEdxColumns.POSITION)]).strip())
 
+    def _repaint_rows(self) -> None:
+        """Redraw the rows, both halves of them.
+
+        The pinned columns are a second view, so an outline drawn on one and
+        not the other is half an outline.
+        """
+        self.table.viewport().update()
+        self._frozen.repaint_rows()
+
     def _on_cell_entered(self, row: int, _column: int) -> None:
         """Outline the row under the cursor."""
         if self._row_highlight.hover_row != row:
             self._row_highlight.hover_row = row
-            self.table.viewport().update()
+            self._repaint_rows()
 
     def _on_cell_clicked(self, row: int, _column: int) -> None:
         """Pick the row, or let it go if it was already picked."""
@@ -1426,7 +1881,7 @@ class SemEdxTypeWidget(QWidget):
             return
         self._picked_key = () if key == self._picked_key else key
         self._sync_picked_row()
-        self.table.viewport().update()
+        self._repaint_rows()
 
     def _sync_picked_row(self) -> None:
         """Find the picked sample's row again, after anything redrew."""
@@ -1514,7 +1969,11 @@ class SemEdxTypeWidget(QWidget):
         if search:
             # Match across every column, so an operator can type a marking, a
             # name or a word from a note without choosing a field first.
-            haystack = df.astype(str).apply(lambda col: col.str.lower())
+            # Cell by cell, because astype(str) leaves a missing value as a
+            # real NaN rather than the string "nan", and joining the row then
+            # fails on a float. A blank note is exactly that case.
+            haystack = df.map(
+                lambda v: "" if v is None or v != v else str(v).lower())
             mask &= haystack.apply(lambda row: search in " ".join(row), axis=1)
 
         return df[mask].reset_index(drop=True)
@@ -1543,6 +2002,8 @@ class SemEdxTypeWidget(QWidget):
         try:
             self.table.load_data(display_df, cell_style_callback=self._cell_style)
             self._place_image_buttons(images_header)
+            self._frozen.freeze_through(
+                COLUMN_DISPLAY_NAMES[str(SemEdxColumns.POSITION)])
         except Exception as e:
             print(f"Error loading SEM EDX table: {e}")
         self._sync_picked_row()
@@ -1665,7 +2126,10 @@ class SemEdxTypeWidget(QWidget):
             zoom=text(SemEdxColumns.ZOOM),
             note=text(SemEdxColumns.NOTE),
             date=text(SemEdxColumns.DATE),
-            measurements=measurements)
+            measurements=measurements,
+            # Saved while the window is still up, so it closes onto a table
+            # that already holds the new figures rather than a second later.
+            on_save=lambda: self._save_sample(electrode, position, dialog))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -1673,12 +2137,32 @@ class SemEdxTypeWidget(QWidget):
             try:
                 if callable(self.on_delete_sample) and self.on_delete_sample(
                         self.generation, electrode, position):
-                    self.data_changed.emit()
+                    # Stay where they were. They deleted one row of four
+                    # hundred, not asked to be taken somewhere else.
+                    with self.table.keep_scroll():
+                        self.data_changed.emit(self.generation)
             except Exception as e:
                 self._report(f"Deleting {electrode} {position} failed",
                              [str(e)], error=True)
-            return
 
+    def _save_sample(self, electrode: str, position: str, dialog):
+        """Write one sample and re-read the table.
+
+        True when the window may close, False when it may not, and None when
+        the work was handed off and will report back: that last one is what
+        keeps the spinner turning, since this thread returns to its event loop
+        instead of sitting on a database call.
+
+        A failed write leaves the window open with everything still typed into
+        it, which is the point of doing this here rather than after it closes.
+        """
+        if callable(self.on_save_sample):
+            self.on_save_sample(
+                self.generation, electrode, position,
+                dialog.values, dialog.measurements,
+                lambda ok, error: self._sample_saved(
+                    dialog, electrode, position, ok, error))
+            return None
         try:
             changed = False
             if dialog.values and callable(self.on_update_sample):
@@ -1688,9 +2172,27 @@ class SemEdxTypeWidget(QWidget):
                 changed |= bool(self.on_update_measurements(
                     self.generation, electrode, position, dialog.measurements))
             if changed:
-                self.data_changed.emit()
+                with self.table.keep_scroll():
+                    self.data_changed.emit(self.generation)
+                # Light the row, the same as a freshly imported one. A save
+                # that takes a moment otherwise looks like nothing happened.
+                self.flash_samples([(electrode, position)])
+            return True
         except Exception as e:
             self._report(f"Saving {electrode} {position} failed", [str(e)], error=True)
+            return False
+
+    def _sample_saved(self, dialog, electrode: str, position: str,
+                      ok: bool, error) -> None:
+        """The answer to a handed-off save. Back on the UI thread."""
+        if ok:
+            # Light the row, the same as a freshly imported one. A save that
+            # takes a moment otherwise looks like nothing happened.
+            self.flash_samples([(electrode, position)])
+        else:
+            self._report(f"Saving {electrode} {position} failed",
+                         [str(error)], error=True)
+        dialog.saved(ok)
 
     def _on_show_images(self, row: int) -> None:
         """Open the captures of one sample, read from its result folder."""
@@ -1727,17 +2229,38 @@ class SemEdxTypeWidget(QWidget):
     # ------------------------------------------------------------------
     # Showing what just arrived
     # ------------------------------------------------------------------
+    def _rows_of(self, samples) -> list[int]:
+        """Which rendered rows these samples are on, if any."""
+        wanted = {(str(e).strip(), str(p).strip()) for e, p in (samples or [])}
+        if not wanted:
+            return []
+        return [row for row in range(self.table.rowCount())
+                if self._sample_at(row) in wanted]
+
+    def flash_samples(self, samples) -> None:
+        """Light these rows where they are, without moving the view.
+
+        For a row the operator was already looking at, an edited one. Scrolling
+        to it would undo the care taken to leave the view where they left it.
+        """
+        rows = self._rows_of(samples)
+        if rows and self._flasher is not None:
+            self._flasher.flash(rows)
+
     def scroll_to(self, samples) -> None:
-        """Bring the first of these samples into view.
+        """Bring the first of these samples into view, and light them all.
 
         An import adds a handful of rows to a table of four hundred, and Gen
         3.1 sorts oldest first, so a new row can be nowhere near the screen.
+        Scrolled to AND lit: on a dense table, arriving at the right place
+        still leaves you hunting for which line is new.
         """
-        wanted = {(str(e).strip(), str(p).strip()) for e, p in (samples or [])}
-        for row in range(self.table.rowCount()):
-            if self._sample_at(row) in wanted:
-                self.table.scrollToItem(self.table.item(row, 0))
-                return
+        rows = self._rows_of(samples)
+        if not rows:
+            return
+        self.table.scrollToItem(self.table.item(rows[0], 0))
+        if self._flasher is not None:
+            self._flasher.flash(rows)
 
     def _sample_at(self, row: int) -> tuple[str, str]:
         """The electrode and position of a rendered row."""
@@ -1764,14 +2287,19 @@ class SemEdxGenerationWidget(QWidget):
     tab the import was started on.
     """
 
-    data_changed = pyqtSignal()
+    data_changed = pyqtSignal(str)
+    # ``(generation, [(electrode, position)], {electrode: type})``. Emitted
+    # rather than acted on, because the generation tabs belong to the parent
+    # and an import started here can land in the other generation.
+    reveal_requested = pyqtSignal(str, object, object)
 
     def __init__(self, parent=None, generation: str = "",
                  generations: list[str] | None = None,
                  layout: dict[str, list[str]] | None = None,
                  on_import_folder=None, on_add_sample=None,
                  on_get_elements=None, on_update_sample=None,
-                 on_update_measurements=None, **callables) -> None:
+                 on_update_measurements=None,
+                 on_list_import_candidates=None, **callables) -> None:
         super().__init__(parent)
         self.generation = str(generation).strip()
         # Every generation there is, so a sample typed in from the wrong tab
@@ -1780,6 +2308,23 @@ class SemEdxGenerationWidget(QWidget):
                                        ] or [self.generation]
         # ``(generation, folder, ask_type, pick) -> (result, already present)``.
         self.on_import_folder = on_import_folder
+        # ``(generation) -> [{name, path}]``, the folders in the library that
+        # nothing has been imported from yet. Named here rather than left in
+        # **callables so it is not handed on to the type widgets.
+        self.on_list_import_candidates = on_list_import_candidates
+        # Where a batch has got to, for the footer on every dialog it raises,
+        # and whether the operator has asked it to stop.
+        self._batch: tuple[int, int] = (0, 0)
+        self._cancelled = False
+        # Whether the folder being imported was confirmed, refused, or never
+        # got as far as asking because it held nothing new.
+        self._confirmed = None
+        # Set when the confirmation is answered with "Choose captures again".
+        self._redo = False
+        # What was answered on the way through, so a trip back does not throw
+        # it away. Both are cleared when a different folder is started.
+        self._remembered_images: dict[tuple[str, str], list[str]] = {}
+        self._remembered_fields: dict[str, str] = {}
         # Recording a sample nobody could parse, and which quantities to ask
         # for. Both are injected, the same as everything else here.
         self.on_add_sample = on_add_sample
@@ -1833,60 +2378,197 @@ class SemEdxGenerationWidget(QWidget):
     # Import
     # ------------------------------------------------------------------
     def _on_add_clicked(self) -> None:
-        """Pick a result folder and read whatever it holds into the right tab."""
-        folder = QFileDialog.getExistingDirectory(self, FOLDER_DIALOG_TITLE)
-        if not folder or not callable(self.on_import_folder):
+        """Choose result folders from the library, or browse for one."""
+        if not callable(self.on_import_folder):
             return
+        if not callable(self.on_list_import_candidates):
+            self._browse_and_import()       # no listing available, old way
+            return
+
+        # Reading the library means a directory walk on a synced share.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            self._import_folder(folder)
+            candidates = {generation: self.on_list_import_candidates(generation)
+                          for generation in self.generations}
         except Exception as e:
-            # Every path from here is reported. An operator picking the wrong
-            # folder is normal, and it must never cost them the window.
+            report(self, "Could not read the SEM images library", [str(e)],
+                   error=True)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        dialog = ImportPickerDialog(
+            self, generations=list(self.generations), candidates=candidates,
+            current=self.generation)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.browse:
+            self._browse_and_import()
+            return
+        # One at a time, and one report each: an operator answering for thirty
+        # folders still needs to see what happened to each of them.
+        chosen = list(dialog.chosen)
+        self._cancelled = False
+        self.add_button.setEnabled(False)
+        try:
+            for index, (generation, folder, spot) in enumerate(chosen, start=1):
+                # Set before the import, so every dialog it raises can show
+                # where the batch has got to.
+                self._batch = (index, len(chosen))
+                # So the previous folder's new rows are on screen, and lit,
+                # before the next one blocks the window parsing.
+                QApplication.processEvents()
+                self._guarded_import(folder, generation, spot)
+                if self._cancelled:
+                    # Including the one in hand: cancelling unwinds it before
+                    # anything is written, so it was not imported either.
+                    remaining = len(chosen) - index + 1
+                    report(self, "Import stopped",
+                           [f"{remaining} of {len(chosen)} folders were "
+                            f"not imported."])
+                    break
+        finally:
+            # Whatever happened, the button comes back and the strip goes.
+            self._batch = (0, 0)
+            self._cancelled = False
+            self.add_button.setEnabled(True)
+
+    def _browse_and_import(self) -> None:
+        """The file explorer, for a capture filed outside the usual layout."""
+        folder = QFileDialog.getExistingDirectory(self, FOLDER_DIALOG_TITLE)
+        if folder:
+            self._cancelled = False
+            self._guarded_import(folder, self.generation)
+
+    def _guarded_import(self, folder: str, generation: str, spot: str = "") -> None:
+        """Import one folder, reporting anything that goes wrong.
+
+        An operator picking the wrong folder is normal, and it must never cost
+        them the window.
+        """
+        # A fresh folder starts with a clean slate. Within one folder the
+        # answers survive, which is what makes going back cheap.
+        self._remembered_images = {}
+        self._remembered_fields = {}
+        try:
+            # More than once when the confirmation is answered with "Choose
+            # captures again": nothing was written, so reading the folder from
+            # the top simply asks everything over.
+            while True:
+                self._redo = False
+                self._import_folder(folder, generation, spot)
+                if not self._redo:
+                    break
+        except ImportCancelled:
+            pass            # they stopped it; nothing was written for this one
+        except Exception as e:
             report(self, "Import failed", [str(e)], error=True)
 
-    def _import_folder(self, folder: str) -> None:
-        """Read one folder, then say what came of it."""
+    def _import_folder(self, folder: str, generation: str = "",
+                       spot: str = "") -> None:
+        """Read one folder, ask before writing it, then show where it landed.
+
+        The generation is passed in rather than taken from this tab: the picker
+        lists both, so a Gen 3.1 folder chosen from the Gen 4.1 tab must still
+        be filed under Gen 3.1.
+
+        A spot narrows it to one place on the plate. A folder can hold five,
+        offered as five rows, and taking one must leave the rest alone.
+        """
+        generation = str(generation or "").strip() or self.generation
+        name = Path(folder).name
+        # None until the confirmation runs, then True or False. It only runs
+        # when the folder actually has something new in it.
+        self._confirmed = None
 
         # Reading a folder means opening every report in it, and they live on
         # a synced share. Without this the window looks hung rather than busy.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             result, skipped = self.on_import_folder(
-                self.generation, folder, self._ask_type, self._pick_images)
+                generation, folder, self._ask_type, self._pick_images,
+                lambda parsed, already: self._confirm_import(parsed, already, name),
+                [spot] if spot else None)
+        except ImportCancelled:
+            # Raised by our own prompts, from inside this call. It is a
+            # decision, not a failure, so it goes to the caller unreported.
+            raise
         except Exception as e:
             report(self, "Import failed", [str(e)], error=True)
             return
         finally:
             QApplication.restoreOverrideCursor()
 
-        # Reload before reporting, so the new rows are already on screen behind
-        # the summary the operator is reading.
-        self.data_changed.emit()
+        if self._confirmed is False:
+            return              # refused at the confirmation, nothing written
 
-        imported = sorted({(m.electrode, m.position) for m in result.measurements
-                           if f"{m.electrode} {m.position}" not in skipped})
-        self._reveal(imported, getattr(result, "electrode_types", {}))
-        # Nothing came out of the folder. Straight to typing it in: a failure
-        # dialog first only puts a page between the operator and the one thing
-        # they can do about it.
-        if not result.measurements and callable(self.on_add_sample):
-            self._offer_manual_entry(folder, result)
+        if self._confirmed:
+            self.data_changed.emit(generation)
+            imported = sorted(
+                {(m.electrode, m.position) for m in result.measurements
+                 if f"{m.electrode} {m.position}" not in skipped})
+            self.reveal_requested.emit(
+                generation, imported, getattr(result, "electrode_types", {}))
             return
 
-        title, lines = self._import_summary(result, skipped, Path(folder).name)
+        # The confirmation never ran, so there was nothing new to write. Say
+        # why: a folder already in the table looks identical to a failed one.
+        if not result.measurements and callable(self.on_add_sample):
+            # Straight to typing it in: a failure dialog first only puts a page
+            # between the operator and the one thing they can do about it.
+            self._offer_manual_entry(folder, result, generation)
+            return
+        title, lines = self._import_summary(result, skipped, name)
         dialog = ImportSummaryDialog(
-            self, title=title, lines=lines, ask_operator=bool(imported),
+            self, title=title, lines=lines, ask_operator=False,
             error=not result.measurements, zoom_hint=self._zoom_of(result))
+        self._prepare_dialog(dialog)
         dialog.exec()
 
-        if dialog.operator and imported:
-            values = {str(SemEdxColumns.OPERATOR): dialog.operator}
-            # Only what was typed. A blank box means "leave it", not "clear it".
-            if dialog.zoom:
-                values[str(SemEdxColumns.ZOOM)] = dialog.zoom
-            if dialog.note:
-                values[str(SemEdxColumns.NOTE)] = dialog.note
-            self._apply_to_samples(imported, values)
+    def _confirm_import(self, result, already: list[str], name: str):
+        """Show what the folder holds and take the by-hand fields, before the write.
+
+        Returns the fields to stamp on every sample, or None to refuse the
+        folder entirely. Asked here rather than after the write because a row
+        that appears and only then gets an operator is a row that stays blank
+        if the window is answered with Cancel.
+        """
+        _title, lines = self._import_summary(result, already, name)
+        with asking():
+            remembered = self._remembered_fields
+            dialog = ImportSummaryDialog(
+                self, title="Confirm import", lines=lines, ask_operator=True,
+                error=False, allow_back=True,
+                # What was typed last time round beats what the sidecars read.
+                zoom_hint=remembered.get("zoom") or self._zoom_of(result),
+                operator_hint=remembered.get("operator", ""),
+                note_hint=remembered.get("note", ""))
+            self._prepare_dialog(dialog)
+            dialog.exec()
+        # Taken whichever button was pressed, so a trip back to the captures
+        # comes back to the same boxes.
+        self._remembered_fields = {"operator": dialog.operator,
+                                   "zoom": dialog.zoom, "note": dialog.note}
+        if getattr(dialog, "back", False):
+            # Refuse this pass. _guarded_import reads the folder again, which
+            # puts every question a second time.
+            self._redo = True
+            self._confirmed = False
+            return None
+        if self._cancelled:
+            self._confirmed = False
+            return None
+
+        self._confirmed = True
+        # Only what was typed. A blank box means "leave it", not "clear it".
+        values = {}
+        if dialog.operator:
+            values[str(SemEdxColumns.OPERATOR)] = dialog.operator
+        if dialog.zoom:
+            values[str(SemEdxColumns.ZOOM)] = dialog.zoom
+        if dialog.note:
+            values[str(SemEdxColumns.NOTE)] = dialog.note
+        return values
 
     def current_type(self) -> str:
         """Which sub tab is open: Anodes or Cathodes."""
@@ -1902,8 +2584,9 @@ class SemEdxGenerationWidget(QWidget):
         text = str(value or "").strip()
         return text if electrode_number(text) is not None else ""
 
-    def _offer_manual_entry(self, folder: str, result) -> None:
+    def _offer_manual_entry(self, folder: str, result, generation: str = "") -> None:
         """Ask whether to type in what the folder could not be read for."""
+        generation = str(generation or "").strip() or self.generation
         if not callable(self.on_add_sample):
             return
         ask = ConfirmationDialog(
@@ -1915,7 +2598,7 @@ class SemEdxGenerationWidget(QWidget):
             return
 
         dialog = ManualSampleDialog(
-            self, generation=self.generation, generations=self.generations,
+            self, generation=generation, generations=self.generations,
             folder=Path(folder).name,
             # Only when it really is a marking. The parser names the folder as
             # the electrode, and a pick one level too high is named for the
@@ -1941,7 +2624,7 @@ class SemEdxGenerationWidget(QWidget):
             report(self, "The sample could not be saved", [str(e)], error=True)
             return
 
-        self.data_changed.emit()
+        self.data_changed.emit(self.generation)
         # Only this generation's tabs are ours to scroll. Another generation's
         # sample is reported instead, saying where it went.
         if generation == self.generation:
@@ -1960,24 +2643,8 @@ class SemEdxGenerationWidget(QWidget):
         found.discard("")
         return found.pop() if len(found) == 1 else ""
 
-    def _apply_to_samples(self, samples: list[tuple[str, str]],
-                          values: dict) -> None:
-        """Stamp the same by-hand fields onto everything the import added."""
-        if not callable(self.on_update_sample):
-            return
-        failed = []
-        for electrode, position in samples:
-            try:
-                self.on_update_sample(self.generation, electrode, position, values)
-            except Exception as e:
-                failed.append(f"{electrode} {position}: {e}")
-        if failed:
-            report(self, "Not everything could be saved", failed, error=True)
-            return
-        self.data_changed.emit()
-
-    def _reveal(self, imported: list[tuple[str, str]],
-                types: dict[str, str]) -> None:
+    def reveal(self, imported: list[tuple[str, str]],
+               types: dict[str, str]) -> None:
         """Show the tab the samples landed on, and light the rows they added.
 
         Which tab that is comes from the electrode type, which is looked up
@@ -1999,11 +2666,48 @@ class SemEdxGenerationWidget(QWidget):
         for electrode_type, samples in by_type.items():
             self.types[electrode_type].scroll_to(samples)
 
+    def _prepare_dialog(self, dialog) -> None:
+        """Seal a question and give it the import footer.
+
+        Sealed because dismissing one used to count as answering it: the
+        capture picker fell back to a guess and the summary lost the operator.
+        The footer's Cancel is then the only way out, which is the point.
+        """
+        dialog.setWindowFlags(
+            dialog.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+        # Held by attribute rather than by Qt parent, so it lives as long as
+        # the dialog without requiring one that Qt will accept as a parent.
+        dialog._no_dismiss = _NoDismiss()
+        dialog.installEventFilter(dialog._no_dismiss)
+
+        layout = dialog.layout()
+        if layout is None:
+            return
+        done, total = self._batch
+        footer = import_footer(done, total, lambda: self._cancel_batch(dialog))
+        # Line the strip up with the dialog's content rather than its frame:
+        # some of these carry their own inset and some do not.
+        side = 0 if layout.contentsMargins().left() else 18
+        footer.layout().setContentsMargins(side, 10, side, side and 14)
+        layout.addWidget(footer)
+
+    def _cancel_batch(self, dialog) -> None:
+        """Stop the import from a dialog that nothing else can dismiss."""
+        self._cancelled = True
+        # done() rather than close(), which the guard deliberately blocks.
+        dialog.done(QDialog.DialogCode.Rejected)
+
     def _ask_type(self, electrode: str, choices: list[str]) -> str:
         """Which type an electrode is, asked only when the database is silent."""
-        dialog = ElectrodeTypeDialog(
-            self, electrode=electrode, choices=choices or self.choices)
-        return dialog.chosen if dialog.exec() == QDialog.DialogCode.Accepted else ""
+        with asking():
+            dialog = ElectrodeTypeDialog(
+                self, electrode=electrode, choices=choices or self.choices)
+            self._prepare_dialog(dialog)
+            chosen = dialog.chosen if dialog.exec() == QDialog.DialogCode.Accepted else ""
+        # Sealed, so the only way it came back rejected is the Cancel.
+        if self._cancelled:
+            raise ImportCancelled
+        return chosen
 
     def _pick_images(self, electrode: str, position: str, candidates: list,
                      _suggested: list) -> list | None:
@@ -2011,12 +2715,23 @@ class SemEdxGenerationWidget(QWidget):
 
         The suggestion is deliberately not shown as a pre-selection: it is a
         guess from the filenames, and a pre-ticked guess gets accepted without
-        being read. It is still what the backend falls back to if this window
-        is closed rather than answered, which is what returning None means.
+        being read. It used to be what the backend fell back to when this
+        window was closed rather than answered, which meant dismissing the
+        question quietly accepted the guess. The window cannot be dismissed
+        now, so the only ways out are choosing or cancelling the import.
         """
-        dialog = ImagePickerDialog(
-            self, electrode=electrode, position=position, images=candidates)
-        return dialog.chosen if dialog.exec() == QDialog.DialogCode.Accepted else None
+        key = (electrode, position)
+        with asking():
+            dialog = ImagePickerDialog(
+                self, electrode=electrode, position=position, images=candidates,
+                preselected=self._remembered_images.get(key))
+            self._prepare_dialog(dialog)
+            chosen = dialog.chosen if dialog.exec() == QDialog.DialogCode.Accepted else None
+        if self._cancelled:
+            raise ImportCancelled
+        if chosen is not None:
+            self._remembered_images[key] = list(chosen)
+        return chosen
 
     @staticmethod
     def _import_summary(result, skipped: list[str], name: str) -> tuple[str, list[str]]:
@@ -2031,10 +2746,14 @@ class SemEdxGenerationWidget(QWidget):
         lines: list[str] = []
 
         if imported:
+            # Which electrode and which spot on it. No count of measurements:
+            # this window is asked before the write now, so what it has to say
+            # is WHAT is about to be written, not how much of it.
             samples = sorted({(m.electrode, m.position) for m in imported})
-            lines.append(f"Added {len(imported)} measurements across "
-                         f"{len(samples)} sample{'s' if len(samples) != 1 else ''}: "
-                         f"{', '.join(f'{e} {p}' for e, p in samples)}.")
+            lines.append(
+                ("Sample: " if len(samples) == 1 else "Samples: ")
+                + "; ".join(", ".join(part for part in sample if part)
+                            for sample in samples))
             # A row of its own: the type is looked up rather than chosen, so it
             # is also the answer to "which tab did that land on".
             described = _describe_types(
@@ -2084,7 +2803,37 @@ class SemEdxWidget(QWidget):
     the layout it was handed, so none of that is written down here.
     """
 
-    data_changed = pyqtSignal()
+    data_changed = pyqtSignal(str)
+
+    def apply_saved(self, generation: str, frames: dict) -> None:
+        """Render frames a background save fetched, without moving the view.
+
+        Same as a poll: the operator did not ask to be taken anywhere, they
+        asked for one row to change.
+        """
+        widget = self.generations.get(str(generation or "").strip())
+        for electrode_type, frame in (frames or {}).items():
+            target = (widget.types.get(str(electrode_type).strip().upper())
+                      if widget else None)
+            if target is None:
+                self.load_data(frame, electrode_type, generation)
+                continue
+            with target.table.keep_scroll():
+                self.load_data(frame, electrode_type, generation)
+
+    def _on_reveal(self, generation: str, imported, types) -> None:
+        """Open the tab an import landed on, both axes of it.
+
+        The generation comes from the folder, so a Gen 3.1 cathode imported
+        from the Gen 4.1 tab opens Gen 3.1 and then Cathodes within it. Only
+        this widget owns the generation strip, which is why the tab that ran
+        the import asks rather than doing it.
+        """
+        widget = self.generations.get(str(generation or "").strip())
+        if widget is None:
+            return
+        self.generation_tabs.setCurrentWidget(widget)
+        widget.reveal(imported, types)
 
     def __init__(self, parent=None,
                  layouts: dict[str, dict[str, list[str]]] | None = None,
@@ -2120,6 +2869,7 @@ class SemEdxWidget(QWidget):
                 generation=generation, generations=list(layouts),
                 layout=layout, **callables)
             widget.data_changed.connect(self.data_changed.emit)
+            widget.reveal_requested.connect(self._on_reveal)
             self.generations[generation] = widget
             self.generation_tabs.addTab(widget, generation)
 
@@ -2175,7 +2925,17 @@ class SemEdxWidget(QWidget):
             return False
         for generation, frames in (result.get("data") or {}).items():
             for electrode_type, frame in (frames or {}).items():
-                self.load_data(frame, electrode_type, generation)
+                # Nobody here asked for this. Somebody else's import must not
+                # move the view of whoever is reading the table, so every one
+                # of them keeps its place rather than landing on the last row.
+                widget = self.generations.get(generation)
+                target = (widget.types.get(str(electrode_type).strip().upper())
+                          if widget else None)
+                if target is None:
+                    self.load_data(frame, electrode_type, generation)
+                    continue
+                with target.table.keep_scroll():
+                    self.load_data(frame, electrode_type, generation)
         return True
 
     def check_for_external_updates(self) -> bool:

@@ -10,16 +10,10 @@ Domain-neutral — the owning tab supplies the counts and their colours.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QRectF, QTimer
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 import qtawesome as qta
-
-import matplotlib
-matplotlib.use("QtAgg", force=False)
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
-import matplotlib.patheffects as path_effects
 
 # Slices smaller than this are left unlabelled on the ring — the legend carries
 # them instead. Labelling every slice is what makes small charts unreadable.
@@ -104,10 +98,12 @@ def draw_donut(ax, counts: dict[str, int], colors: dict[str, str],
         pctdistance=0.81,
         textprops={"fontsize": pct_fontsize, "fontweight": "bold"},
         # Thin ring, with a surface-coloured gap so adjacent slices separate.
-        wedgeprops={"width": 0.38, "edgecolor": "#FFFFFF", "linewidth": 2},
+        wedgeprops={"width": _RING_WIDTH, "edgecolor": "#FFFFFF", "linewidth": 2},
     )
     # Per slice, not one colour for the lot, and haloed in its own fill so a
     # label wider than the band is still readable where it crosses the edge.
+    import matplotlib.patheffects as path_effects
+
     for text, fill in zip(percents, fills):
         text.set_color(ink_on(fill))
         text.set_path_effects([
@@ -129,27 +125,89 @@ def render_donut_png(counts: dict[str, int], colors: dict[str, str],
     """
     import io
 
-    figure = Figure(figsize=(size_px / 100, size_px / 100), dpi=dpi)
-    figure.patch.set_alpha(0.0)
-    ax = figure.add_subplot(111)
-    figure.subplots_adjust(left=0, right=1, top=1, bottom=0)
-    draw_donut(ax, counts, colors, unit_label)
+    figure = _new_figure(size_px, dpi)
+    draw_donut(figure.add_subplot(111), counts, colors, unit_label)
 
     buffer = io.BytesIO()
     figure.savefig(buffer, format="png", transparent=True, dpi=dpi)
     return buffer.getvalue()
 
 
-class _NoWheelCanvas(FigureCanvasQTAgg):
-    """A chart that lets the wheel through to whatever scrolls behind it.
+# The ring's thickness as a fraction of its radius, matching the wedges the
+# chart draws, so the placeholder and the real thing are the same shape.
+_RING_WIDTH = 0.38
+
+
+def _new_figure(diameter: int, dpi: int = 100):
+    """A square figure with no furniture around the axes.
+
+    Imported here rather than at the top of the file. Matplotlib costs about
+    400ms to import, and nothing needs it until a chart has real numbers to
+    draw, which is well after the window is on screen.
+    """
+    from matplotlib.figure import Figure
+
+    figure = Figure(figsize=(diameter / 100, diameter / 100), dpi=dpi)
+    figure.patch.set_alpha(0.0)
+    # Matplotlib reserves room for axes furniture we don't draw; without this
+    # the ring sits in the middle of a large empty square.
+    figure.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    return figure
+
+
+def _new_canvas(figure, parent=None):
+    """The figure as a widget that lets the wheel through.
 
     Matplotlib accepts wheel events so a plot can be zoomed. This one is a
     static ring, so all that achieved was a dead patch in the middle of the
     panel where scrolling stopped working.
     """
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
-    def wheelEvent(self, event) -> None:  # noqa: N802 (Qt naming)
-        event.ignore()
+    class _NoWheelCanvas(FigureCanvasQTAgg):
+        def wheelEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+            event.ignore()
+
+    canvas = _NoWheelCanvas(figure)
+    canvas.setStyleSheet("background: transparent;")
+    return canvas
+
+
+class _RingPlaceholder(QWidget):
+    """What the chart shows before matplotlib is needed.
+
+    Two states, both drawn by hand: a blank ring while the first read is on
+    its way, and "No data" when the filters genuinely matched nothing. Neither
+    is worth loading a plotting library for, and keeping them out of it is
+    what lets the import wait until the window is up.
+    """
+
+    def __init__(self, diameter: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(diameter, diameter)
+        self.mode = "loading"           # or "empty", or "" to draw nothing
+
+    def show_mode(self, mode: str) -> None:
+        self.mode = mode
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 (Qt naming)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self.mode == "empty":
+            painter.setPen(QPen(QColor(_MUTED)))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No data")
+        elif self.mode == "loading":
+            radius = min(self.width(), self.height()) / 2
+            thickness = radius * _RING_WIDTH
+            pen = QPen(QColor(_PLACEHOLDER))
+            pen.setWidthF(thickness)
+            painter.setPen(pen)
+            middle = radius - thickness / 2
+            painter.drawEllipse(QRectF(self.width() / 2 - middle,
+                                       self.height() / 2 - middle,
+                                       middle * 2, middle * 2))
+        painter.end()
 
 
 class StatusDonutWidget(QWidget):
@@ -175,7 +233,7 @@ class StatusDonutWidget(QWidget):
         # Hidden until somebody calls set_info. The chart is domain-neutral, so
         # what the categories mean has to come from the tab that filled it.
         self._info = QLabel()
-        self._info.setPixmap(qta.icon("fa5s.info-circle", color=_MUTED).pixmap(15, 15))
+        self._info.setPixmap(qta.icon("fa6s.circle-info", color=_MUTED).pixmap(15, 15))
         self._info.setCursor(Qt.CursorShape.WhatsThisCursor)
         self._info.hide()
 
@@ -187,16 +245,16 @@ class StatusDonutWidget(QWidget):
         heading_row.addWidget(self._info, 0)
         layout.addLayout(heading_row, 0)
 
-        self._figure = Figure(figsize=(diameter / 100, diameter / 100), dpi=100)
-        self._figure.patch.set_alpha(0.0)
-        self._canvas = _NoWheelCanvas(self._figure)
-        self._canvas.setStyleSheet("background: transparent;")
-        self._canvas.setFixedSize(diameter, diameter)
-        self._ax = self._figure.add_subplot(111)
-        # Matplotlib reserves room for axes furniture we don't draw; without
-        # this the ring sits in the middle of a large empty square.
-        self._figure.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        layout.addWidget(self._canvas, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Drawn by hand until there is something worth plotting, so the app
+        # can start without matplotlib.
+        self._diameter = diameter
+        self._figure = None
+        self._canvas = None
+        self._ax = None
+        self._placeholder = _RingPlaceholder(diameter)
+        self._chart_slot = layout
+        self._chart_index = layout.count()
+        layout.addWidget(self._placeholder, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._legend = QVBoxLayout()
         self._legend.setContentsMargins(0, 0, 0, 0)
@@ -225,6 +283,19 @@ class StatusDonutWidget(QWidget):
         self.update_data({}, {})
 
     # ------------------------------------------------------------------
+    def _ensure_canvas(self) -> None:
+        """Bring matplotlib in and swap the hand-drawn ring for a real one."""
+        if self._canvas is not None:
+            return
+        self._figure = _new_figure(self._diameter)
+        self._ax = self._figure.add_subplot(111)
+        self._canvas = _new_canvas(self._figure, self)
+        self._canvas.setFixedSize(self._diameter, self._diameter)
+        self._placeholder.hide()
+        self._chart_slot.removeWidget(self._placeholder)
+        self._chart_slot.insertWidget(self._chart_index, self._canvas, 0,
+                                      Qt.AlignmentFlag.AlignHCenter)
+
     def set_info(self, entries) -> None:
         """Show an info icon explaining the categories, as ``(term, meaning)``.
 
@@ -259,13 +330,16 @@ class StatusDonutWidget(QWidget):
         self._tween.stop()
         self._shown, self._target, self._start = {}, {}, {}
         self._rebuild_legend({}, {}, 0)
-        self._ax.clear()
-        self._ax.set_aspect("equal")
-        self._ax.axis("off")
-        self._ax.pie([1], colors=[_PLACEHOLDER], startangle=90,
-                     wedgeprops={"width": 0.38, "edgecolor": "#FFFFFF",
-                                 "linewidth": 2})
-        self._canvas.draw_idle()
+        if self._canvas is None:
+            self._placeholder.show_mode("loading")
+        else:
+            self._ax.clear()
+            self._ax.set_aspect("equal")
+            self._ax.axis("off")
+            self._ax.pie([1], colors=[_PLACEHOLDER], startangle=90,
+                         wedgeprops={"width": _RING_WIDTH, "edgecolor": "#FFFFFF",
+                                     "linewidth": 2})
+            self._canvas.draw_idle()
 
     def update_data(self, counts: dict[str, int], colors: dict[str, str]) -> None:
         """Redraw from ``{category: count}`` and ``{category: hex}``.
@@ -318,6 +392,14 @@ class StatusDonutWidget(QWidget):
         self._draw_ring(self._shown, self._colors)
 
     def _draw_ring(self, counts: dict, colors: dict[str, str]) -> None:
+        # Nothing to plot yet: keep it hand-drawn and leave matplotlib alone.
+        # An empty ring means the read is still coming while we are loading,
+        # and a genuinely empty result once it has arrived.
+        if self._canvas is None and not any(
+                value >= 0.5 for value in counts.values()):
+            self._placeholder.show_mode("loading" if self._loading else "empty")
+            return
+        self._ensure_canvas()
         # Below a whole electrode a slice is not worth a wedge, and leaving it
         # in makes a category that reached zero flicker on the last frame.
         drawn = {name: value for name, value in counts.items() if value >= 0.5}

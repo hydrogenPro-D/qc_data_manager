@@ -23,7 +23,7 @@ from src.data_access import app_config, build_backend
 from .electrodes_gui import ElectrodesWidget
 from .qc_board_gui import QcBoardWidget
 from .sem_edx_gui import SemEdxWidget
-from .poll_worker import DeferredLoad, PollWorker
+from .poll_worker import BackgroundJob, DeferredLoad, PollWorker
 from .widgets.no_wheel_tabs import NoWheelTabWidget
 from .styles.tab_styles import MAIN_TAB_STYLE
 from .styles.tooltip_styles import TOOLTIP_STYLE
@@ -34,6 +34,9 @@ TEST_DB_WARNING = "Connected to test database"
 # decisions went to the real board.
 TEST_DB_STYLE = ("color: #C81E1E; font-family: 'Segoe UI', Arial, sans-serif; "
                  "font-size: 13px; font-weight: 700; padding: 0 14px 0 8px;")
+# Quiet: it is on screen for about a second and is not the point.
+STARTING_STYLE = ("color: #94A3B8; font-family: 'Segoe UI', Arial, sans-serif; "
+                  "font-size: 15px;")
 
 
 def _seeded_on_first_use(build):
@@ -61,17 +64,36 @@ class MainWindow(QMainWindow):
     poll_requested = pyqtSignal(str)
     # Work the window does not need in order to open, run once it is up.
     deferred_requested = pyqtSignal(str)
+    # One piece of work the operator is waiting on, off the UI thread so the
+    # window keeps drawing while it runs.
+    background_requested = pyqtSignal(object)
 
     def __init__(self) -> None:
         super().__init__()
-        # The single data dependency. Building it here makes DB init a blocking,
-        # fail-fast startup step — an unavailable backend fails at launch.
+        self.setWindowTitle(APP_TITLE)
+        # The frame and nothing else. Everything expensive is in start(), so
+        # the window is up a moment after the double click rather than a few
+        # seconds later, which read to operators as nothing having happened.
+        starting = QLabel("Starting")
+        starting.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        starting.setStyleSheet(STARTING_STYLE)
+        self.setCentralWidget(starting)
+
+    def start(self) -> None:
+        """Build the backend and the tabs, with the window already showing.
+
+        Split out of __init__ purely so the frame can be painted first. This
+        is still the blocking, fail-fast startup step it always was: run_app
+        calls it inside the same try, so an unreachable database ends at the
+        same titled dialog, only now with the window visible behind it.
+        """
+        # The single data dependency.
         self.backend = build_backend(
             db_install_confirm=self._confirm_driver_install,
             ask_image_root=self._ask_image_root)
 
-        self.setWindowTitle(APP_TITLE)
-
+        # Replaces the "Starting" label, which Qt deletes with the old central
+        # widget.
         central_widget = QWidget()
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(8, 8, 8, 8)
@@ -143,6 +165,12 @@ class MainWindow(QMainWindow):
             on_update_measurements=self.backend.update_sem_edx_measurements,
             on_delete_sample=self.backend.delete_sem_edx_sample,
             on_list_images=self.backend.list_sem_edx_images,
+            # What is still sitting in the images library unimported, so the
+            # operator picks from a list rather than navigating to it.
+            on_list_import_candidates=self.backend.sem_edx_import_candidates,
+            # Saving a sample is a write and a re-read, about a second. Handed
+            # over whole so it can run off the UI thread.
+            on_save_sample=self._save_sem_edx_sample,
             on_images_available=self.backend.sem_images_available,
             on_check_for_updates=self._update_callbacks["sem_edx"],
         )
@@ -198,6 +226,16 @@ class MainWindow(QMainWindow):
         self._deferred_worker.moveToThread(self._poll_thread)
         self.deferred_requested.connect(self._deferred_worker.run)
         self._deferred_worker.loaded.connect(self._on_deferred)
+
+        # Shares the poll thread, so a save and a poll cannot run at once:
+        # both are queued slots on it and Qt runs them one after another.
+        self._background_worker = BackgroundJob()
+        self._background_worker.moveToThread(self._poll_thread)
+        self.background_requested.connect(self._background_worker.run)
+        self._background_worker.finished.connect(self._on_background_finished)
+        # What to call with the answer. One at a time: the only caller is a
+        # modal dialog, which cannot ask twice.
+        self._background_done = None
         # Which tabs are still showing a placeholder, so the poll timer does
         # not ask about a table that has not had its first read.
         self._awaiting = {"electrodes", "sem_edx"}
@@ -318,23 +356,67 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Applying QC board change failed: {e}")
 
-    def _reload_sem_edx(self) -> None:
-        """Feed every generation's electrode type sub tab from the backend."""
+    def _reload_sem_edx(self, only: str = "") -> None:
+        """Feed the electrode type sub tabs from the backend.
+
+        One generation when the caller knows which changed, which is the usual
+        case: a save touches one, and re-reading the others cost about 850ms
+        of a wait the operator sat through after every edit.
+        """
+        wanted = str(only or "").strip()
         for generation in self.backend.get_sem_edx_generations():
+            if wanted and generation != wanted:
+                continue
             for electrode_type in self.backend.get_sem_edx_types(generation):
                 self.sem_edx_widget.load_data(
                     self.backend.get_sem_edx(generation, electrode_type),
                     electrode_type, generation)
 
-    def _on_sem_edx_changed(self) -> None:
+    def _on_background_finished(self, result, error) -> None:
+        """Hand a background answer to whoever asked. Back on the UI thread."""
+        done, self._background_done = self._background_done, None
+        if callable(done):
+            done(result, error)
+
+    def _save_sem_edx_sample(self, generation, electrode, position,
+                             values, measurements, done) -> None:
+        """Write one sample and re-read its generation, off the UI thread.
+
+        The write and the read go to the worker; only the rendering comes back
+        here, since a widget may only be touched on this thread. That is what
+        lets the sample window keep its spinner turning while it waits.
+        """
+        def work():
+            changed = False
+            if values:
+                changed |= bool(self.backend.update_sem_edx_sample(
+                    generation, electrode, position, values))
+            if measurements:
+                changed |= bool(self.backend.update_sem_edx_measurements(
+                    generation, electrode, position, measurements))
+            if not changed:
+                return None
+            return {electrode_type: self.backend.get_sem_edx(generation, electrode_type)
+                    for electrode_type in self.backend.get_sem_edx_types(generation)}
+
+        def rendered(frames, error):
+            if error is None and frames:
+                self.sem_edx_widget.apply_saved(generation, frames)
+            done(error is None, error)
+
+        self._background_done = rendered
+        self.background_requested.emit(work)
+
+    def _on_sem_edx_changed(self, generation: str = "") -> None:
         """An import or an edit changed the stored SEM results, so re-read them.
 
-        Re-processing the cached measurements is cheap: the CSV was already
-        updated in place, so there is no file read here. Both types reload, an
-        import can land on either.
+        Both electrode types reload, since an import can land on either, but
+        only the generation named: nothing an edit does to one can change
+        another. An empty name re-reads everything, for a caller that does not
+        know which changed.
         """
         try:
-            self._reload_sem_edx()
+            self._reload_sem_edx(generation)
         except Exception as e:
             print(f"Reloading the SEM EDX results failed: {e}")
 
@@ -501,6 +583,9 @@ def run_app():
         app.setStyleSheet(TOOLTIP_STYLE)
         window = MainWindow()
         window.showMaximized()
+        # Let the empty frame actually paint before the slow part starts.
+        app.processEvents()
+        window.start()
         sys.exit(app.exec())
     except FileNotFoundError as e:
         _fatal("Missing Required Files",

@@ -32,7 +32,7 @@ import datetime as dt
 import json
 import subprocess
 import threading
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pandas as pd
 
@@ -43,6 +43,7 @@ from src.data_access.electrodes.electrode_columns import (
     normalize_marking,
 )
 from src.data_access.electrodes.electrode_processor import ElectrodeProcessor
+from src.data_access.electrodes.status_propagation import electrode_number
 from src.data_access.electrodes.electrode_status_db import (
     load_manual_edit_times,
     load_status_by_marking as load_status_from_db,
@@ -51,6 +52,7 @@ from src.data_access.electrodes.electrode_vat_db import load_vat_by_marking
 from src.data_access.electrodes.status_propagation import propagate_detailed
 from src.data_access.qc_board.qc_board_db_store import QcBoardDbStore
 from src.data_access.sem_edx import sem_edx_db_source as sem_db
+from src.data_access.sem_edx import sem_edx_library
 from src.data_access.sem_edx.sem_edx_columns import (
     DEFAULT_LAYOUT,
     RATIO_SEPARATOR,
@@ -64,9 +66,12 @@ from src.data_access.sem_edx.sem_edx_processor import SemEdxProcessor
 from src.data_access.sem_edx.sem_edx_result_parser import (
     ParsedFolder,
     ParsedMeasurement,
+    base_position,
     candidate_images,
+    is_known_position,
     parse_result_folder,
     result_images,
+    sample_locations,
 )
 from src.data_access.sem_edx.sem_edx_source import (
     DEFAULT_GENERATION,
@@ -103,16 +108,34 @@ METADATA_COLUMNS = [c.value for c in ElectrodeColumns]
 # Only electrode markings are of interest; the table also holds A-numbered and
 # unmarked rows (~2k of them) from other runs. Recipes other than the two
 # production ones (test/dryer/buffer runs) are excluded the same way.
-# TRIM because [Full_name] is fixed-width and comes back space-padded.
+# No TRIM on [Full_name], although it is fixed-width and comes back padded:
+# SQL Server ignores trailing spaces when comparing, so = and IN match anyway,
+# and wrapping the column in a function only stops an index from being used.
+# What reaches the screen is trimmed by normalize_cell, at the reader.
 METADATA_FILTER = (
     "[Marking] LIKE 'B%' "
-    "AND TRIM([Full_name]) IN ('CATHODE', 'ANODE', 'MM1')"
+    "AND [Full_name] IN ('CATHODE', 'ANODE', 'MM1')"
 )
 
 # The numeric part of a marking ('B14174' → 14174), for sorting in production
 # order. TRY_CONVERT rather than CONVERT so an odd marking sorts last instead
 # of failing the whole query.
 MARKING_NUMBER_SQL = "TRY_CONVERT(BIGINT, SUBSTRING(TRIM([Marking]), 2, 20))"
+
+def _tail_key(value) -> str:
+    """A stored folder, comparable: forward slashes, no case, no stray edges.
+
+    Through PureWindowsPath so a row that used the other separator, or a
+    trailing one, still compares equal to the same folder.
+    """
+    text = str(value or "").strip()
+    return PureWindowsPath(text).as_posix().strip("/").lower() if text else ""
+
+
+def _marking_key(value) -> str:
+    """An electrode marking, comparable: no case, no spaces."""
+    return "".join(str(value or "").split()).upper()
+
 
 class DriverNotInstalledError(RuntimeError):
     """Raised when the required ODBC driver is absent even after its installer ran."""
@@ -196,7 +219,8 @@ class DbManager:
             settled_priorities_provider=self._settled_priorities,
             vat_provider=lambda: self._vats,
             vat_pending_provider=self.vats_pending,
-            ongoing_provider=self._qc_board.ongoing_electrodes)
+            ongoing_provider=self._qc_board.ongoing_electrodes,
+            pinned_provider=lambda: set(self._manual_edits))
         # Which quantities each sheet shows, from config.json. Read per
         # generation on first use, and one processor per generation and
         # electrode type, since none of the four measures quite the same thing.
@@ -341,6 +365,14 @@ class DbManager:
         """The database the app writes to. The plant tables may be elsewhere."""
         return self._database
 
+    def plant_database_name(self) -> str:
+        """Where dbo.MetaData and dbo.ProcessData are read from.
+
+        Not always the same as ``database_name``: the app writes its own schema
+        to one database and reads the electrode list from the production one.
+        """
+        return self._plant_database
+
     def is_test_database(self) -> bool:
         """Whether the writes are going somewhere other than production.
 
@@ -443,7 +475,8 @@ class DbManager:
         return df[match]
 
     def import_sem_edx_folder(self, generation: str, folder, ask_type=None,
-                              pick_images=None) -> tuple[ParsedFolder, list[str]]:
+                              pick_images=None, confirm=None, positions=None
+                              ) -> tuple[ParsedFolder, list[str]]:
         """Read a result folder into the database.
 
         Which tab a sample lands on is decided by its electrode type, looked up
@@ -458,10 +491,16 @@ class DbManager:
                 so this layer stays Qt-free, the same way the driver install
                 prompt works. Returning None leaves the sample untyped, and it
                 is reported rather than filed somewhere arbitrary.
+            confirm: ``(result, already_present) -> dict | None``, asked once
+                per folder immediately before anything is written. The dict is
+                the by-hand fields to stamp on every sample it adds; None
+                refuses the folder, and then nothing is written at all.
             pick_images: ``(electrode, position, candidates, suggested) -> list``,
                 which captures in the folder belong to each sample. Also a
                 callable for the same reason. Returning None keeps the
                 suggestion.
+            positions: Only these spots, when a folder holds several and one is
+                wanted on its own. None takes whatever the folder holds.
 
         Returns:
             The parse result and the samples skipped as already present. A
@@ -473,6 +512,12 @@ class DbManager:
                     for quantity in quantities(layout)
                     for symbol in quantity.elements}
         result = parse_result_folder(folder, sorted(expected))
+        # One folder can hold five spots off one electrode, and the picker
+        # offers them separately, so an import can be asked for just one.
+        if positions:
+            wanted = {base_position(p) for p in positions}
+            result.measurements = [m for m in result.measurements
+                                   if base_position(m.position) in wanted]
         if not result.measurements:
             return result, []
 
@@ -514,7 +559,20 @@ class DbManager:
             return result, [f"{e} {p}" for e, p in skipped]
 
         if fresh:
+            # NOTHING IS WRITTEN UNTIL THIS COMES BACK. The by-hand fields are
+            # asked for before the write rather than patched on after it, so a
+            # sample is never on screen missing them, and a refusal leaves the
+            # folder unimported instead of filed without an operator.
+            values = ({} if not callable(confirm)
+                      else confirm(result, [f"{e} {p}" for e, p in skipped]))
+            if values is None:
+                return result, [f"{e} {p}" for e, p in skipped]
             self._store_sem_edx(generation, folder, result, fresh, types, images)
+            if values:
+                for electrode, position in dict.fromkeys(
+                        (m.electrode, m.position) for m in fresh):
+                    self.update_sem_edx_sample(
+                        generation, electrode, position, values)
         return result, [f"{e} {p}" for e, p in skipped]
 
     def _store_sem_edx(self, generation: str, folder: str, result: ParsedFolder,
@@ -701,6 +759,59 @@ class DbManager:
             self._sem_edx_caches[generation] = df
         return changed
 
+    def sem_edx_import_candidates(self, generation: str) -> list[dict]:
+        """Result folders for one generation the database has nothing from.
+
+        GENEROUS ON PURPOSE. A folder it cannot match is listed rather than
+        hidden: importing one twice writes nothing, because every measurement
+        already on record is skipped, while hiding one loses the capture.
+        """
+        folders = sem_edx_library.generation_folders(generation, self._ask_image_root)
+        if not folders:
+            return []
+
+        recorded = self._recorded_samples(generation)
+        markings = {_marking_key(e) for e, _ in recorded}
+        # Anode or cathode, from dbo.MetaData. Built once rather than asked per
+        # folder: get_electrode_type rescans the whole cache each call, which
+        # over six hundred folders is a scan too many.
+        types = self._types_by_marking()
+
+        candidates = []
+        for path in folders:
+            # Only the spots the plate is really mapped at, plus any odd
+            # spelling this generation already uses. Everything else is a
+            # filename quirk, and splitting a folder on those would offer
+            # "Site" and "EDX" as if they were places on an electrode.
+            spots = [(electrode, position) for electrode, position in sample_locations(path)
+                     if is_known_position(position)
+                     or (normalize_marking(electrode), base_position(position)) in recorded]
+            if not spots:
+                # No readable report, so there is no spot to compare. Offered
+                # once, unless this electrode already has something on record.
+                if _marking_key(path.name) in markings:
+                    continue
+                candidates.append({
+                    "name": path.name, "path": str(path), "position": "",
+                    "type": types.get(normalize_marking(path.name), "")})
+                continue
+            for electrode, position in spots:
+                if (normalize_marking(electrode), base_position(position)) in recorded:
+                    continue
+                candidates.append({
+                    "name": path.name, "path": str(path), "position": position,
+                    # Blank when the electrode list has never heard of it,
+                    # which is normal for the older Gen 3.1 names.
+                    "type": types.get(normalize_marking(electrode or path.name), "")})
+
+        # Newest first: the folder somebody just captured is the one they are
+        # here for, and it would otherwise be at the bottom of six hundred.
+        # Anything with no number in its name sorts last rather than first.
+        candidates.sort(key=lambda c: (electrode_number(c["name"]) is None,
+                                       -(electrode_number(c["name"]) or 0),
+                                       c["name"].lower()))
+        return candidates
+
     def sem_images_available(self, folder) -> bool:
         """Whether a stored folder can be found on this machine.
 
@@ -743,6 +854,37 @@ class DbManager:
             return ""
         return str(match.iloc[0][str(ElectrodeColumns.FULL_NAME)]).strip()
 
+    def _recorded_samples(self, generation: str) -> set[tuple[str, str]]:
+        """Every ``(electrode, spot)`` this generation already has readings for.
+
+        Per spot rather than per electrode, because five spots off one
+        electrode are five separate imports.
+        """
+        df = self._sem_edx_measurements(generation)
+        electrode_column, position_column = SAMPLE_KEY
+        if df.empty or electrode_column not in df or position_column not in df:
+            return set()
+        return {(normalize_marking(str(electrode)), base_position(str(position)))
+                for electrode, position
+                in zip(df[electrode_column], df[position_column])}
+
+    def _types_by_marking(self) -> dict[str, str]:
+        """``{normalised marking: 'ANODE' | 'CATHODE' | ...}`` from dbo.MetaData.
+
+        Empty before the electrode list has been read, which leaves the type
+        blank rather than wrong.
+        """
+        cache = self._metadata_cache
+        if cache is None or cache.empty:
+            return {}
+        marking_column = str(ElectrodeColumns.MARKING)
+        name_column = str(ElectrodeColumns.FULL_NAME)
+        if marking_column not in cache or name_column not in cache:
+            return {}
+        markings = cache[marking_column].astype(str).map(normalize_marking)
+        names = cache[name_column].astype(str).str.strip()
+        return {marking: name for marking, name in zip(markings, names) if marking}
+
     def _resolve_types(self, electrodes: set[str], result: ParsedFolder,
                        ask_type, generation: str = DEFAULT_GENERATION
                        ) -> dict[str, str]:
@@ -778,6 +920,14 @@ class DbManager:
         filenames say about position is the suggestion; the operator has the
         last word, since a filename is not always right about which spot a
         capture came from.
+
+        WHAT IS OFFERED IS SCOPED BY FOLDER, though. Where a plate's spots are
+        filed in a subfolder each, only that spot's folder is shown: the
+        filenames may be wrong about which spot, but the folder they were put
+        in rarely is, and offering all fifteen made the choice harder rather
+        than freer. Where the captures all share one folder, that is still
+        everything, because then the filename is the only thing separating
+        them and second-guessing it is the operator's job.
         """
         candidates = candidate_images(result.folder)
         if not candidates:
@@ -787,15 +937,18 @@ class DbManager:
         samples = [(m.electrode, m.position) for m in result.measurements]
         for key in dict.fromkeys(s for s in samples if s not in known):
             electrode, position = key
-            suggested = [p.name for p in
-                         result_images(result.folder, electrode, position)]
+            matched = result_images(result.folder, electrode, position)
+            suggested = [p.name for p in matched]
+            homes = {p.parent for p in matched}
+            offered = ([p for p in candidates if p.parent in homes] if homes
+                       else list(candidates))
+            fallback = [p.name for p in offered]
             picked = None
             if callable(pick_images):
-                picked = pick_images(electrode, position,
-                                     list(candidates), suggested or
-                                     [p.name for p in candidates])
+                picked = pick_images(electrode, position, offered,
+                                     suggested or fallback)
             if picked is None:
-                picked = suggested or [p.name for p in candidates]
+                picked = suggested or fallback
             chosen[key] = list(picked)
         return chosen
 
@@ -935,7 +1088,8 @@ class DbManager:
         # The same inputs the tab renders with. A finalise that swept differently
         # would freeze statuses nobody was shown.
         effective, sources, priorities, _causes = propagate_detailed(
-            markings, base, decisions, vats=self._vats)
+            markings, base, decisions, vats=self._vats,
+            pinned=set(self._manual_edits))
         not_tested = str(ElectrodeStatus.NOT_TESTED)
         frozen = {
             marking: (status, sources.get(marking, marking))

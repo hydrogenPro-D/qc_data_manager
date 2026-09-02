@@ -225,9 +225,10 @@ class ElectrodeDetailDialog(QDialog):
     on the toolbar, which finalises the whole board at once.
     """
 
-    # In the order the work happens: not run, run, and then the two answers.
+    # In the order the work happens: not run, run, and then the two answers,
+    # Failed first because it is the one that stops the electrode.
     IC_CHOICES = ((IC_PENDING, "Not tested"), (IC_DONE, "Test done"),
-                  (IC_PASSED, "Passed"), (IC_FAILED, "Failed"))
+                  (IC_FAILED, "Failed"), (IC_PASSED, "Passed"))
     SEM_CHOICES = ((SEM_PENDING, "Not tested"), (SEM_CRACKED, "Cracked"),
                    (SEM_ACCEPTED, "Accepted"))
 
