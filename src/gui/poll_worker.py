@@ -56,6 +56,30 @@ class PollWorker(QObject):
             self.polled.emit(key, {})
 
 
+class BackgroundJob(QObject):
+    """Runs one arbitrary callable off the UI thread and hands back its answer.
+
+    For work the operator is waiting on rather than work the window starts by
+    itself: saving a sample is a write and then a re-read, about a second in
+    total, and on the UI thread that second is a frozen window with a spinner
+    that does not turn.
+
+    The callable must not touch a widget. It runs here; whatever it returns is
+    rendered by whoever asked, back on the UI thread.
+    """
+
+    # (result, error). Exactly one of them is None. Always emitted, so the
+    # caller is never left waiting on an answer that is not coming.
+    finished = pyqtSignal(object, object)
+
+    @pyqtSlot(object)
+    def run(self, work) -> None:
+        try:
+            self.finished.emit(work(), None)
+        except Exception as e:
+            self.finished.emit(None, e)
+
+
 class DeferredLoad(QObject):
     """Runs one piece of backend work off the UI thread, once.
 

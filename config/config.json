@@ -5,10 +5,15 @@
   "sem_edx": {
     "image_roots": [
       "%USERPROFILE%\\HydrogenPro ASA\\Advanced Surface Plating ApS - Documents\\General\\SEM images\\Production SEM images",
+      "%USERPROFILE%\\HydrogenPro ASA\\Advanced Surface Plating ApS - General\\SEM images\\Production SEM images",
       "%USERPROFILE%\\Advanced Surface Plating ApS - Documents\\General\\SEM images\\Production SEM images",
+      "%USERPROFILE%\\Advanced Surface Plating ApS - General\\SEM images\\Production SEM images",
       "%USERPROFILE%\\General\\SEM images\\Production SEM images",
       "%USERPROFILE%\\SEM images\\Production SEM images",
-      "%USERPROFILE%\\Production SEM images"
+      "%USERPROFILE%\\Production SEM images",
+      "%ONEDRIVE%\\General\\SEM images\\Production SEM images",
+      "%ONEDRIVE%\\SEM images\\Production SEM images",
+      "%ONEDRIVE%\\Production SEM images"
     ],
     "_layout": "Which quantities each sheet shows and in what order. 'Ni' is an element, 'Ni:S' a ratio worked out from two. Run data/ETL/03_import_sem_edx_gen4_1.py to see what a workbook holds.",
     "layout": {

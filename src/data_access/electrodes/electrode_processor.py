@@ -29,7 +29,8 @@ class ElectrodeProcessor:
                  board_provider=None,
                  vat_provider=None,
                  vat_pending_provider=None,
-                 ongoing_provider=None) -> None:
+                 ongoing_provider=None,
+                 pinned_provider=None) -> None:
         # Handed in, read once per backend rather than per refresh. The
         # backend owns where they come from, which keeps this class pure data
         # in, data out and lets tests pass a dict.
@@ -60,6 +61,11 @@ class ElectrodeProcessor:
         # process(), so a card added on another machine shows up on the next
         # poll rather than at the next restart.
         self._ongoing_provider = ongoing_provider
+        # Which statuses an operator set by hand. No sweep may claim one, and
+        # none of them can be beaten by a frozen status covering the same
+        # electrode: if a row is not locked, the status you pick is the status
+        # you get.
+        self._pinned_provider = pinned_provider
 
     def set_base_status(self, marking: str, status: str) -> None:
         """Record a status set by hand, so the next process() shows it.
@@ -70,11 +76,24 @@ class ElectrodeProcessor:
         self._status_by_marking[str(marking).strip()] = str(status)
 
     def base_status(self) -> dict[str, str]:
-        """The status of every electrode before any live board decision."""
+        """The status of every electrode before any live board decision.
+
+        A hand set status is re-applied last, over the finalised ones. Both are
+        settled and both cover the same electrode, so the operator's correction
+        is the later statement by definition, and ordering them by their two
+        clocks made a machine running slightly behind the server lose its edits.
+        """
         base = dict(self._status_by_marking)
         if self._base_overrides_provider:
             base.update(self._base_overrides_provider())
+        for marking in self.pinned():
+            if marking in self._status_by_marking:
+                base[marking] = self._status_by_marking[marking]
         return base
+
+    def pinned(self) -> set[str]:
+        """Electrodes whose status was set by hand, so no sweep may claim them."""
+        return set(self._pinned_provider() or ()) if self._pinned_provider else set()
 
     def process(self, df: pd.DataFrame | None) -> pd.DataFrame:
         """Raw rows → display frame: known columns in display order, plus Status.
@@ -144,7 +163,8 @@ class ElectrodeProcessor:
         effective, sources, priorities, causes = propagate_detailed(
             list(markings), base, decisions, vats=self._vats(),
             ongoing=set(self._ongoing_provider() or ())
-            if self._ongoing_provider else set())
+            if self._ongoing_provider else set(),
+            pinned=self.pinned())
 
         # Test first belongs on an electrode that is waiting to be tested, and
         # nowhere else: it means "of the ones in the queue, do this one first".

@@ -1,0 +1,10 @@
+{
+  "_rotation": "Seconds each window stays on screen before the deck advances. 4 is the testing value; 20 to 30 is right for a wall.",
+  "rotation_seconds": 30,
+  "_transition": "How long one window takes to slide out and the next to slide in.",
+  "transition_ms": 920,
+  "_refresh": "How often the backend is re-read, on a worker thread. A screen nobody touches can afford to be a minute behind.",
+  "refresh_interval_ms": 60000,
+  "_vat_rows": "How many vats the league table lists. More than this will not be readable across a room.",
+  "vat_rows": 6
+}

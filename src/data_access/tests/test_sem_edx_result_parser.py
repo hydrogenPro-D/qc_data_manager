@@ -329,7 +329,7 @@ class TestCompleteness(unittest.TestCase):
         the numbers exist nowhere in the folder."""
         result = self._folder([{"Ni": 24.5}, {}, {}])
         _check_completeness(result, ["Ni", "S"])
-        self.assertTrue(any("no composition table" in p for p in result.problems))
+        self.assertTrue(any("Missing data from" in p for p in result.problems))
         self.assertTrue(any("B1_TR2.docx" in p for p in result.problems))
 
     def test_one_missing_element_is_not_worth_a_line(self) -> None:
