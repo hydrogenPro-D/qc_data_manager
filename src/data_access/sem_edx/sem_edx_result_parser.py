@@ -92,8 +92,12 @@ MARKING_PATTERN = re.compile(r"[A-Za-z]+\d+")
 # The point is bounded to two digits and must not be followed by another, so
 # the capture counter in B14050_TR_1553 and the date in B14134_TR_2026-07-31
 # are never mistaken for one.
+# A leading word before the marking is allowed and thrown away: some exports
+# are named "EDX_B14599_TR_1". Without that, such a name matched nothing and
+# fell through to _loose_name, which took the SECOND segment as the spot and
+# filed the sample under "B14599" as if the marking were a place on the plate.
 NAME_PATTERN = re.compile(
-    r"^\s*(?P<electrode>[A-Za-z]+\d+)"
+    r"^\s*(?:[A-Za-z]+[\s_-]+)?(?P<electrode>[A-Za-z]+\d+)"
     r"[\s_-]+(?P<position>[A-Za-z]+)"
     r"(?:[\s_-]*(?P<point>\d{1,2})(?!\d))?")
 
@@ -115,6 +119,9 @@ NUMBERED_POSITION = re.compile(r"\s*\(\d+\)$")
 # What a sample is called when the filename says nothing about where on the
 # plate it came from.
 UNNAMED_POSITION = "sample"
+
+# The spots a folder may be split on, for is_known_position below.
+_KNOWN_POSITIONS = {name.lower() for name in POSITIONS.values()} | {UNNAMED_POSITION}
 
 # A composition row: the symbol, a tab, the atomic percent. Trailing tabs are
 # the empty sigma column.
@@ -331,6 +338,48 @@ def _walk(folder: Path, depth: int = 0, budget=None):
         yield from _walk(child, depth + 1, budget)
 
 
+def sample_locations(folder) -> list[tuple[str, str]]:
+    """``[(electrode, position), ...]`` a result folder holds, cheaply.
+
+    One folder can carry several spots off one electrode, each in its own
+    subfolder, and they are imported one at a time. Listing them has to be
+    cheap enough to do for the whole library when the picker opens, so this
+    reads REPORT FILENAMES ONLY and opens nothing: parsing the documents costs
+    about 700ms a folder, which over six hundred of them is a wait nobody
+    would sit through.
+
+    Only the reports are looked at, not every file. The captures beside them
+    carry names like "Site" and "DESKTOP" that read as spots and are not.
+    """
+    found: list[tuple[str, str]] = []
+    for reports in reports_directories(folder):
+        for report in sorted(reports.glob("*.docx")):
+            parsed = _parse_name(report.stem)
+            if parsed is None:
+                continue
+            entry = (parsed[0], parsed[1] or UNNAMED_POSITION)
+            if entry not in found:
+                found.append(entry)
+    return found
+
+
+def is_known_position(position: str) -> bool:
+    """Whether a spot name is one the plate is actually mapped at.
+
+    _parse_name keeps a code it does not recognise rather than dropping it,
+    which is right when reading a folder: better an oddly named sample than a
+    measurement filed under the wrong spot. It is wrong when GUESSING at a
+    folder's contents from filenames alone, where "Site", "EDX" and "DESKTOP"
+    would each become a spot to import.
+    """
+    return base_position(position) in _KNOWN_POSITIONS
+
+
+def base_position(position: str) -> str:
+    """A position as it compares: no case, no ETL-added "(2)" suffix."""
+    return _base_position(position)
+
+
 def reports_directories(folder) -> list[Path]:
     """Public wrapper, for telling an EDX export from the other studies filed
     beside it in the library."""
@@ -533,15 +582,20 @@ def _loose_name(stem: str) -> tuple[str, str, int | None]:
     """What to call a report whose name follows no convention at all.
 
     ``'A567_Site 1_2026-07-14_09-16-58'`` -> ``('A567', 'Site 1', None)``. The
-    second segment is taken as the spot exactly as written, since a name like
-    "Site 1" is a label rather than a code with a point stuck on the end. The
-    point is left for the numbering pass to fill in from the reading order.
+    segment AFTER the marking is taken as the spot exactly as written, since a
+    name like "Site 1" is a label rather than a code with a point stuck on the
+    end. The point is left for the numbering pass to fill in from the reading
+    order.
+
+    Found rather than assumed to be first: a name that opens with something
+    else, "EDX_B14599_TR", would otherwise hand back the marking itself as the
+    spot, and the sample would be filed at a place called B14599.
     """
-    segments = [s.strip() for s in str(stem).split("_")]
-    electrode = segments[0] if segments and MARKING_PATTERN.fullmatch(
-        segments[0]) else ""
-    position = segments[1] if len(segments) > 1 and segments[1] else ""
-    return electrode, position or UNNAMED_POSITION, None
+    segments = [s.strip() for s in str(stem).split("_") if s.strip()]
+    marking = next((s for s in segments if MARKING_PATTERN.fullmatch(s)), "")
+    after = segments[segments.index(marking) + 1:] if marking else segments[1:]
+    position = after[0] if after else ""
+    return marking, position or UNNAMED_POSITION, None
 
 
 def _paragraph_texts(document) -> list[str]:
@@ -679,14 +733,11 @@ def _check_completeness(result: ParsedFolder, expected_elements=()) -> None:
     # A report missing one element is not worth a line, it shows as a blank
     # cell. A report missing the composition block entirely is a different
     # thing: it means the export was made without the quantitative results, and
-    # the numbers exist nowhere in the folder.
+    # the numbers exist nowhere in the folder. Named plainly: what an operator
+    # needs is which file to export again, and the rest was in the way of it.
     empty = [m.source for m in result.measurements if not m.elements]
     if empty:
-        result.problems.append(
-            f"{len(empty)} of {len(result.measurements)} reports carry no "
-            f"composition table, so those measurements are blank: "
-            f"{', '.join(sorted(empty))}. Export them again from the "
-            f"microscope with the Map Sum Spectrum included.")
+        result.problems.append(f"Missing data from {', '.join(sorted(empty))}")
 
     without_zoom = [m for m in result.measurements if not m.zoom]
     if without_zoom:

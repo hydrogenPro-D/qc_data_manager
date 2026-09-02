@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
+from PyQt6.QtCore import Qt, QObject, QPointF, QRectF, QSize, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QFontMetrics
 from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
@@ -121,6 +121,52 @@ def _foreground_of(index) -> QColor:
     if value is None:
         return QColor(DEFAULT_TEXT)
     return value.color() if isinstance(value, QBrush) else QColor(value)
+
+
+# How long a freshly changed row stays lit, and how often it steps down.
+FLASH_MS = 1500
+FLASH_TICK_MS = 60
+
+
+class RowFlasher(QObject):
+    """Lights rows on one table and fades them back out.
+
+    The wash itself is painted by RowHighlight; this only drives it. Lives here
+    rather than in a tab because two tabs want it now, and a second copy would
+    drift from the first the moment either was tuned.
+    """
+
+    def __init__(self, highlight: RowHighlight, table, parent=None) -> None:
+        super().__init__(parent)
+        self._highlight = highlight
+        self._table = table
+        self._timer = QTimer(self)
+        self._timer.setInterval(FLASH_TICK_MS)
+        self._timer.timeout.connect(self._fade)
+
+    def flash(self, rows) -> None:
+        """Light these row indexes at full strength. Empty does nothing."""
+        lit = {int(row): 1.0 for row in (rows or [])}
+        if not lit:
+            return
+        self._highlight.flashing = lit
+        self._timer.start()
+        self._repaint()
+
+    def _fade(self) -> None:
+        """Step every lit row down, and stop once the last one is out."""
+        step = FLASH_TICK_MS / FLASH_MS
+        faded = {row: strength - step
+                 for row, strength in self._highlight.flashing.items()
+                 if strength - step > 0}
+        self._highlight.flashing = faded
+        if not faded:
+            self._timer.stop()
+        self._repaint()
+
+    def _repaint(self) -> None:
+        if self._table is not None:
+            self._table.viewport().update()
 
 
 class RowHighlightDelegate(QStyledItemDelegate):

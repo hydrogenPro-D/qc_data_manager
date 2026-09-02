@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import datetime
 import struct
+import threading
+import time
 from decimal import Decimal
 
 import pandas as pd
@@ -68,12 +70,56 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
 
 
 class SqlSession:
-    """Opens connections and runs statements. Holds no state between calls."""
+    """Runs statements over a connection kept open per thread.
+
+    The handshake to Azure SQL costs around 50ms, and the app makes ten reads
+    before its window is on screen, so opening one per statement spent half a
+    second doing nothing but introductions.
+
+    PER THREAD, because a pyodbc connection cannot be shared: the polling
+    worker reads while the window is reading, and one connection between them
+    would interleave two cursors on one socket.
+
+    A kept connection can go away underneath us, so a read reopens and retries
+    once, and any connection left idle long enough is replaced before it is
+    trusted. A WRITE is never retried: if the link dropped after the statement
+    reached the server, nobody here can tell whether it committed, and running
+    it again could apply it twice.
+    """
+
+    # Past this, assume the server has hung up and start a fresh connection
+    # rather than find out the hard way. Comfortably under Azure SQL's idle
+    # timeout, which is around thirty minutes.
+    _MAX_IDLE_SECONDS = 240
+
+    # SQLSTATE classes that mean the connection went away rather than the
+    # statement being wrong. Anything else is a real error and is not retried.
+    _BROKEN_STATES = ("08", "HYT")
 
     def __init__(self, connection_string: str) -> None:
         self._connection_string = connection_string
+        self._local = threading.local()
 
     def connect(self):
+        """This thread's connection, opened on first use and then reused."""
+        connection = getattr(self._local, "connection", None)
+        used_at = getattr(self._local, "used_at", 0.0)
+        if connection is not None and time.monotonic() - used_at < self._MAX_IDLE_SECONDS:
+            self._local.used_at = time.monotonic()
+            return connection
+
+        if connection is not None:
+            self._discard()
+        connection = self._open()
+        self._local.connection = connection
+        self._local.used_at = time.monotonic()
+        return connection
+
+    def close(self) -> None:
+        """Let go of this thread's connection, if it has one."""
+        self._discard()
+
+    def _open(self):
         """A connection with the DATETIMEOFFSET converter registered.
 
         Every path goes through here so no caller can hit the unsupported-type
@@ -84,6 +130,30 @@ class SqlSession:
         connection = pyodbc.connect(self._connection_string)
         connection.add_output_converter(SQL_DATETIMEOFFSET, handle_datetimeoffset)
         return connection
+
+    def _discard(self) -> None:
+        """Forget this thread's connection, closing it if it still can be."""
+        connection = getattr(self._local, "connection", None)
+        self._local.connection = None
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except Exception:
+            pass                        # it was already gone, which is the point
+
+    @classmethod
+    def _is_broken(cls, error: Exception) -> bool:
+        """Whether this error means the connection died, not the statement.
+
+        Two shapes: the server hanging up arrives as a SQLSTATE in the 08 or
+        HYT class, while a connection already closed at this end raises with a
+        plain message and no state at all.
+        """
+        state = error.args[0] if error.args else ""
+        if isinstance(state, str) and state.startswith(cls._BROKEN_STATES):
+            return True
+        return "closed connection" in str(error).lower()
 
     def query(self, sql: str, params: tuple = ()) -> pd.DataFrame:
         """A SELECT as a normalized frame."""
@@ -101,6 +171,8 @@ class SqlSession:
 
         The parameter names are ours and the values are bound, so nothing the
         operator types reaches the statement text.
+
+        Not retried, deliberately. See the class docstring.
         """
         names = list(params)
         assignments = ", ".join(f"@{name} = ?" for name in names)
@@ -119,18 +191,30 @@ class SqlSession:
                           for row in cursor.fetchall()]
             connection.commit()
             return result
-        except Exception:
-            connection.rollback()
+        except Exception as e:
+            try:
+                connection.rollback()
+            except Exception:
+                pass                    # a dead connection cannot roll back
+            if self._is_broken(e):
+                self._discard()
             raise
-        finally:
-            connection.close()
 
     def _fetch(self, sql: str, params: tuple = ()) -> tuple[list[str], list[tuple]]:
-        connection = self.connect()
+        """Read, reopening and trying again once if the connection had died."""
         try:
-            cursor = connection.cursor()
+            return self._fetch_once(sql, params)
+        except Exception as e:
+            if not self._is_broken(e):
+                raise
+            self._discard()
+            return self._fetch_once(sql, params)
+
+    def _fetch_once(self, sql: str, params: tuple = ()) -> tuple[list[str], list[tuple]]:
+        cursor = self.connect().cursor()
+        try:
             cursor.execute(sql, params) if params else cursor.execute(sql)
             columns = [c[0] for c in cursor.description]
             return columns, [tuple(row) for row in cursor.fetchall()]
         finally:
-            connection.close()
+            cursor.close()

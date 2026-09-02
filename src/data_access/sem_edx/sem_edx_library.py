@@ -140,6 +140,21 @@ def image_root(ask=None) -> Path | None:
     return _root
 
 
+def generation_folders(generation: str, ask=None) -> list[Path]:
+    """Every result folder for one generation, sorted by name, or [].
+
+    The generations sit under the one production line this app deals with, so
+    PROOF names it here as well as proving a library is the real one.
+    """
+    root = image_root(ask)
+    if root is None:
+        return []
+    folder = root / PROOF / str(generation or "").strip()
+    if not folder.is_dir():
+        return []
+    return sorted(_subdirectories(folder), key=lambda p: p.name.lower())
+
+
 def set_root(folder) -> None:
     """Use this folder for the rest of the session. For tests, and the picker."""
     global _root, _searched

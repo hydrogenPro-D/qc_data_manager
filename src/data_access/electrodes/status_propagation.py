@@ -86,6 +86,7 @@ def propagate(markings: list[str], base_status: dict[str, str],
 def propagate_detailed(
     markings: list[str], base_status: dict[str, str], decisions: dict[str, str],
     vats: dict[str, str] | None = None, ongoing: set[str] | None = None,
+    pinned: set[str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str], set[str]]:
     """Effective statuses, which decision produced each, and the test-first set.
 
@@ -98,6 +99,11 @@ def propagate_detailed(
         decisions: The explicit board verdicts, ``{marking: status}``.
         vats: ``{marking: vat}`` from the process log. An electrode the log
             gives two vats for has no single vat and takes no part in one.
+        pinned: Electrodes whose status an operator set by hand. No sweep may
+            claim one: a correction is a statement about that electrode, and
+            an inference drawn from a neighbour has no business overruling it.
+            Told apart by being pinned rather than by what they read, since a
+            hand set Released is indistinguishable from a swept one.
         ongoing: Electrodes on the QC board that nobody has decided yet. They
             read Test ongoing whatever they read otherwise, and lose their
             test-first flag: somebody is already testing them. Nothing is
@@ -129,6 +135,7 @@ def propagate_detailed(
     # Which run each scrap's doubt travels along: the whole of production, or
     # one vat's electrodes.
     lanes = _lanes(order, vats or {}, decisions)
+    held = set(pinned or ())
 
     # Order matters. Margins first, since they only claim untested electrodes.
     # Then the doubt around each scrap. Releases run last so they can clear the
@@ -137,13 +144,13 @@ def propagate_detailed(
     for marking, verdict in decisions.items():
         if verdict in _SCRAPPED_FAMILY and marking in lanes:
             run, at, _bounded = lanes[marking]
-            _scrap_margin(status, order, sources, causes, marking, run, at)
+            _scrap_margin(status, order, sources, causes, marking, run, at, held)
     for marking, verdict in decisions.items():
         if verdict in _SCRAPPED_FAMILY and marking in lanes:
             priorities |= _needs_testing(status, order, sources, causes,
-                                         marking, *lanes[marking])
+                                         marking, *lanes[marking], pinned=held)
     _apply_release_sweeps(status, position, decisions, order, sources,
-                          causes, priorities, lanes)
+                          causes, priorities, lanes, held)
 
     effective = dict(zip(order, status))
     for marking in markings:
@@ -233,7 +240,8 @@ def _credit(sources: dict[str, str], causes: dict[str, set[str]],
 
 def _scrap_margin(status: list[str], order: list[str], sources: dict[str, str],
                   causes: dict[str, set[str]],
-                  marking: str, run: list[int], at: int) -> None:
+                  marking: str, run: list[int], at: int,
+                  pinned: set[str] | None = None) -> None:
     """Scrap the SCRAP_MARGIN electrodes either side, along ``run``.
 
     Counted in electrodes of that run rather than by marking, since the
@@ -241,6 +249,9 @@ def _scrap_margin(status: list[str], order: list[str], sources: dict[str, str],
     margin. Only untested electrodes are claimed.
 
     Walked outward one at a time rather than taken as a flat span, because a
+    A hand set electrode is skipped but does NOT stop the walk: the operator
+    spoke about that one electrode, not about whether a fault reached past it.
+
     released electrode in between STOPS IT. Somebody put that one on a rig and
     it came back good, so the fault did not reach that far, and the doubt has
     no business stepping over it to condemn the electrode beyond. A scrap in
@@ -255,6 +266,8 @@ def _scrap_margin(status: list[str], order: list[str], sources: dict[str, str],
             index = run[cursor]
             if status[index] in _PROVEN_GOOD:
                 break
+            if order[index] in (pinned or ()):
+                continue
             if status[index] in _UNMEASURED:
                 status[index] = _SCRAPPED
                 _credit(sources, causes, order[index], marking)
@@ -263,7 +276,7 @@ def _scrap_margin(status: list[str], order: list[str], sources: dict[str, str],
 def _needs_testing(status: list[str], order: list[str], sources: dict[str, str],
                    causes: dict[str, set[str]],
                    marking: str, run: list[int], at: int,
-                   short: bool = False) -> set[str]:
+                   short: bool = False, pinned: set[str] | None = None) -> set[str]:
     """Flag the doubt either side of one scrap's margin, along ``run``.
 
     From the first electrode beyond the margin, walk outward marking untested
@@ -309,7 +322,7 @@ def _needs_testing(status: list[str], order: list[str], sources: dict[str, str],
             # along. Left alone it would never appear in anybody's work queue
             # again, so an electrode inside a fault's doubt would ship without
             # ever being looked at. Only a real pass is left standing.
-            if status[index] in _UNMEASURED:
+            if status[index] in _UNMEASURED and order[index] not in (pinned or ()):
                 status[index] = _NEEDS_TESTING
                 _credit(sources, causes, order[index], marking, primary=False)
             if cursor == edge and status[index] == _NEEDS_TESTING:
@@ -323,7 +336,8 @@ def _apply_release_sweeps(status: list[str], position: dict[int, int],
                           decisions: dict[str, str], order: list[str],
                           sources: dict[str, str], causes: dict[str, set[str]],
                           priorities: set[str],
-                          lanes: dict[str, tuple[list[int], int, bool]]) -> None:
+                          lanes: dict[str, tuple[list[int], int, bool]],
+                          pinned: set[str] | None = None) -> None:
     """Spread each release as far as the evidence actually reaches.
 
     Two separate things happen:
@@ -355,7 +369,10 @@ def _apply_release_sweeps(status: list[str], position: dict[int, int],
         if marking in lanes:
             run, at, _bounded = lanes[marking]
             step = at - 1
-            while step >= 0 and status[run[step]] == _NOT_TESTED:
+            # A hand set electrode ends the walk the way a verdict does. It is
+            # one, just written by an operator rather than read off a rig.
+            while (step >= 0 and status[run[step]] == _NOT_TESTED
+                   and order[run[step]] not in (pinned or ())):
                 status[run[step]] = _RELEASED
                 _credit(sources, causes, order[run[step]], marking)
                 step -= 1
@@ -368,14 +385,15 @@ def _apply_release_sweeps(status: list[str], position: dict[int, int],
         run, at = (lanes[marking][0], lanes[marking][1]) if marking in lanes else (None, 0)
         for step, becomes in ((-1, _RELEASED), (1, _NOT_TESTED)):
             _clear_resolved_doubt(status, order, sources, causes, priorities,
-                                  index, step, marking, run, at, becomes)
+                                  index, step, marking, run, at, becomes, pinned)
 
 
 def _clear_resolved_doubt(status: list[str], order: list[str], sources: dict[str, str],
                           causes: dict[str, set[str]],
                           priorities: set[str], index: int, step: int,
                           marking: str, lane: list[int] | None = None,
-                          at: int = 0, becomes: str = _RELEASED) -> None:
+                          at: int = 0, becomes: str = _RELEASED,
+                          pinned: set[str] | None = None) -> None:
     """Settle one contiguous Needs-testing run beside a released electrode,
     unless the run runs into a scrap — that side's doubt is unresolved.
 
@@ -396,7 +414,9 @@ def _clear_resolved_doubt(status: list[str], order: list[str], sources: dict[str
     found: list[int] = []
     beyond = None
     for position in positions:
-        if status[position] != _NEEDS_TESTING:
+        # A hand set electrode bounds the run rather than joining it, whatever
+        # it reads. It is not doubt this release gets to settle.
+        if status[position] != _NEEDS_TESTING or order[position] in (pinned or ()):
             beyond = position
             break
         found.append(position)

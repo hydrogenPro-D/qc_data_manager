@@ -29,7 +29,7 @@ from src.data_access.electrodes.status_ranges import collapse_to_ranges
 from .widgets.data_table_widget import DataTableWidget, CellStyle
 from .widgets.filter_bar_widget import FilterBarWidget, FilterDropdown
 from .widgets.table_delegates import (RowFillDelegate, StatusPillDelegate,
-                                      PillStyle, RowHighlight,
+                                      PillStyle, RowHighlight, RowFlasher,
                                       LoadingCellDelegate)
 from .widgets.skeleton_overlay import (SkeletonOverlay, SHIMMER_TICK_MS,
                                        pulse_strength)
@@ -92,7 +92,32 @@ SCRAPPED_TOTAL = "Scrapped"
 # the fault; only an electrode that passed and was destroyed anyway is counted
 # as the cost of testing.
 SCRAP_FAULTS = "Production faults"
-SCRAP_TESTING = "Consumed by testing"
+SCRAP_TESTING = "Consumed by QC testing"
+
+# The chart calls a tested-and-passed electrode by what became of it rather
+# than by its verdict, because on a chart of what the line produced that is the
+# useful reading: it passed, and testing destroyed it, so it is a cost of QC
+# rather than something shippable. The table badge keeps the verdict.
+CHART_LABEL_OVERRIDES: dict[str, str] = {
+    str(ElectrodeStatus.TESTED_AND_RELEASED): SCRAP_TESTING,
+}
+# Released first and the QC cost second, so the two green slices read as a pair
+# and the order never depends on how the enum happens to be written.
+CHART_ORDER: tuple[ElectrodeStatus, ...] = (
+    ElectrodeStatus.RELEASED,
+    ElectrodeStatus.TESTED_AND_RELEASED,
+    ElectrodeStatus.TESTED_AND_SCRAPPED,
+    ElectrodeStatus.SCRAPPED,
+    ElectrodeStatus.NEEDS_TESTING,
+    ElectrodeStatus.NOT_TESTED,
+    ElectrodeStatus.TEST_ONGOING,
+)
+
+
+def chart_label(stored) -> str:
+    """The status as the chart names it, which is not always the badge."""
+    text = str(stored).strip()
+    return CHART_LABEL_OVERRIDES.get(text, status_label(text))
 
 # The QC table's footing. Its rows are a share of this rather than of everything
 # produced, so a pass rate reads as a pass rate.
@@ -214,8 +239,6 @@ ONGOING_TICK_MS = 320
 # How long a row somebody else changed stays lit, and how often the wash is
 # stepped down. Long enough to catch the eye across the table, short enough
 # that it is gone before it becomes something to ignore.
-FLASH_MS = 1100
-FLASH_TICK_MS = 60
 
 # The zoom strip above the table. Round, and big enough to hit with a thumb,
 # since this tab is used standing at a tablet.
@@ -439,9 +462,7 @@ class ElectrodesWidget(QWidget):
         self._ongoing_timer.setInterval(ONGOING_TICK_MS)
         self._ongoing_timer.timeout.connect(self._advance_ongoing)
 
-        self._flash_timer = QTimer(self)
-        self._flash_timer.setInterval(FLASH_TICK_MS)
-        self._flash_timer.timeout.connect(self._fade_flash)
+        self._flasher = RowFlasher(self._row_highlight, self.table, self)
 
         self._shimmer_step = 0
         self._shimmer_timer = QTimer(self)
@@ -732,7 +753,11 @@ class ElectrodesWidget(QWidget):
         if search:
             # Match across every column, so an operator can type a marking, a
             # date fragment or a status without choosing a field first.
-            haystack = df.astype(str).apply(lambda col: col.str.lower())
+            # Cell by cell, because astype(str) leaves a missing value as a
+            # real NaN rather than the string "nan", and joining the row then
+            # fails on a float. A blank note is exactly that case.
+            haystack = df.map(
+                lambda v: "" if v is None or v != v else str(v).lower())
             mask &= haystack.apply(lambda row: search in " ".join(row), axis=1)
 
         return df[mask].reset_index(drop=True)
@@ -864,14 +889,16 @@ class ElectrodesWidget(QWidget):
         reads as "none of these" rather than silently vanishing. Shared by the
         donut and the report, so the ring on paper is the ring on screen.
         """
-        counts = {status_label(status): 0 for status in self.statuses_in_scope()}
+        chosen = set(self.statuses_in_scope())
+        counts = {chart_label(status): 0 for status in CHART_ORDER
+                  if str(status) in chosen}
         if self.df_visible is not None and STATUS_COLUMN in self.df_visible.columns:
             for status, count in self.df_visible[STATUS_COLUMN].astype(str).str.strip(
             ).value_counts().items():
-                label = status_label(status)
+                label = chart_label(status)
                 if label in counts:
                     counts[label] = int(count)
-        return counts, {status_label(s): c for s, c in ROW_ACCENTS.items()}
+        return counts, {chart_label(s): c for s, c in ROW_ACCENTS.items()}
 
     def _build_zoom_widget(self) -> QWidget:
         """Minus, the current scale, plus, as one widget for the filter bar."""
@@ -1110,21 +1137,7 @@ class ElectrodesWidget(QWidget):
         rows = [index for index, marking in enumerate(visible) if marking in wanted]
         if not rows:
             return
-        self._row_highlight.flashing = {row: 1.0 for row in rows}
-        self._flash_timer.start()
-        self.table.viewport().update()
-
-    def _fade_flash(self) -> None:
-        """Step every lit row down, and stop once the last one is out."""
-        step = FLASH_TICK_MS / FLASH_MS
-        faded = {row: strength - step
-                 for row, strength in self._row_highlight.flashing.items()
-                 if strength - step > 0}
-        self._row_highlight.flashing = faded
-        if not faded:
-            self._flash_timer.stop()
-        if self.table is not None:
-            self.table.viewport().update()
+        self._flasher.flash(rows)
 
     def _advance_ongoing(self) -> None:
         """Next frame of the dots, and repaint the rows showing them."""
@@ -1308,22 +1321,26 @@ class ElectrodesWidget(QWidget):
                                      unit_label="electrodes")
 
         date_from, date_to = self._visible_date_span()
-        html = build_report_html(
-            ranges=ranges, production=production, qc=qc, qc_total=consumed,
-            tints={**{status_label(s): c for s, c in ROW_TINTS.items()},
-                   ALL_PRODUCED: "#E9ECEF",
-                   SCRAPPED_TOTAL: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
-                   SCRAP_FAULTS: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
-                   SCRAP_TESTING: ROW_TINTS[str(ElectrodeStatus.TESTED_AND_RELEASED)],
-                   ALL_TESTED: "#E9ECEF"},
-            filters=self.filter_bar.active(),
-            date_from=date_from, date_to=date_to,
-            total_shown=len(visible),
-            total_all=0 if self.df_source is None else len(self.df_source),
-            chart_counts=chart_counts, chart_colors=chart_colors,
-            definitions=self._report_definitions(), chart_png=chart_png)
 
-        ReportDialog(self, html=html, chart_png=chart_png,
+        def render(title: str = "") -> str:
+            """The whole report under one title, so the dialog can retitle it."""
+            return build_report_html(
+                ranges=ranges, production=production, qc=qc, qc_total=consumed,
+                tints={**{status_label(s): c for s, c in ROW_TINTS.items()},
+                       ALL_PRODUCED: "#E9ECEF",
+                       SCRAPPED_TOTAL: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
+                       SCRAP_FAULTS: ROW_TINTS[str(ElectrodeStatus.SCRAPPED)],
+                       SCRAP_TESTING: ROW_TINTS[str(ElectrodeStatus.TESTED_AND_RELEASED)],
+                       ALL_TESTED: "#E9ECEF"},
+                filters=self.filter_bar.active(),
+                date_from=date_from, date_to=date_to,
+                total_shown=len(visible),
+                total_all=0 if self.df_source is None else len(self.df_source),
+                chart_counts=chart_counts, chart_colors=chart_colors,
+                definitions=self._report_definitions(), chart_png=chart_png,
+                title=title)
+
+        ReportDialog(self, html=render(), chart_png=chart_png, rebuild=render,
                      suggested_name=f"qc_report_{date_from}_{date_to}.pdf"
                      .replace(".", "-").replace("-pdf", ".pdf")).exec()
 
@@ -1335,10 +1352,10 @@ class ElectrodesWidget(QWidget):
         renames it here too. Shared by the chart's info icon and the report.
         """
         return [
-            (status_label(ElectrodeStatus.TESTED_AND_RELEASED),
-             "Electrode that was tested and passed the tests."),
             (status_label(ElectrodeStatus.RELEASED),
              "Presumably good electrode, can be sold."),
+            (status_label(ElectrodeStatus.TESTED_AND_RELEASED),
+             "Electrode that was tested and passed the tests."),
             (status_label(ElectrodeStatus.TESTED_AND_SCRAPPED),
              "Electrode that was tested and failed the tests."),
             (status_label(ElectrodeStatus.SCRAPPED),
@@ -1362,8 +1379,7 @@ class ElectrodesWidget(QWidget):
         return self._status_definitions() + [
             (ALL_PRODUCED, "Number of electrodes matching the filters."),
             (SCRAPPED_TOTAL, "Everything that cannot be sold."),
-            (SCRAP_FAULTS,
-             "Electrodes that either failed a test or are presumed to be bad."),
+            (SCRAP_FAULTS, "Rejected + Tested, failed."),
             (SCRAP_TESTING,
              "An electrode that passed the test but therefore cannot be sold."),
             (ALL_TESTED, "Number of electrodes that have been tested."),
