@@ -114,7 +114,7 @@ METADATA_COLUMNS = [c.value for c in ElectrodeColumns]
 # What reaches the screen is trimmed by normalize_cell, at the reader.
 METADATA_FILTER = (
     "[Marking] LIKE 'B%' "
-    "AND [Full_name] IN ('CATHODE', 'ANODE', 'MM1')"
+    "AND [Full_name] IN ('CATHODE', 'ANODE', 'MM1', 'CATHODE NEW')"
 )
 
 # The numeric part of a marking ('B14174' → 14174), for sorting in production
