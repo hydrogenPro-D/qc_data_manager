@@ -17,7 +17,8 @@ import datetime as dt
 from dataclasses import dataclass
 
 from PyQt6.QtCore import Qt, QDate, QEvent, QPointF, QTimer, pyqtSignal
-from PyQt6.QtGui import QMouseEvent, QStandardItem, QStandardItemModel
+from PyQt6.QtGui import (QFontMetrics, QMouseEvent, QStandardItem,
+                         QStandardItemModel)
 import qtawesome as qta
 from PyQt6.QtWidgets import (
     QApplication, QCalendarWidget, QWidget, QHBoxLayout, QVBoxLayout, QLabel,
@@ -275,6 +276,15 @@ class CheckableFilterCombo(NoScrollComboBox):
 
     changed = pyqtSignal()
 
+    # What a row costs besides its text: the tick and its margins, as
+    # TickDelegate lays them out, plus the right margin and room for a
+    # scrollbar so the last character is never clipped by one appearing.
+    POPUP_PADDING = (TickDelegate.LEFT + TickDelegate.SIZE + TickDelegate.GAP
+                     + 6 + 26)
+    # And on the closed combo: the 10px padding either side from _COMBO_STYLE,
+    # the 20px arrow, the border, and a little slack so nothing is elided.
+    CLOSED_PADDING = 10 + 10 + 20 + 2 + 6
+
     def __init__(self, all_label: str = "All", parent=None) -> None:
         super().__init__(parent)
         self._all_label = all_label
@@ -302,7 +312,21 @@ class CheckableFilterCombo(NoScrollComboBox):
                                else Qt.CheckState.Unchecked)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             model.appendRow(item)
+        self._fit_popup()
         self._show_summary()
+
+    def _fit_popup(self) -> None:
+        """Widen the popup to whatever its longest option needs.
+
+        The combo itself is sized by the filter bar and stays narrow, and Qt
+        gives the popup the same width, which cut longer electrode types off
+        halfway. Only the list grows; the closed combo is untouched.
+        """
+        model = self.model()
+        metrics = QFontMetrics(self.view().font())
+        widest = max((metrics.horizontalAdvance(model.item(row).text())
+                      for row in range(1, model.rowCount())), default=0)
+        self.view().setMinimumWidth(widest + self.POPUP_PADDING)
 
     def checked(self) -> list:
         """Everything ticked, in the order it is offered."""
@@ -365,6 +389,12 @@ class CheckableFilterCombo(NoScrollComboBox):
             text = f"{len(chosen)} chosen"
         self.model().item(0).setText(text)
         self.setCurrentIndex(0)
+        # A combo sizes itself on first show and then keeps that width, so a
+        # longer value picked later was elided. Grown to fit what it displays
+        # now, which also shrinks back when the filter is cleared.
+        metrics = QFontMetrics(self.font())
+        self.setMinimumWidth(metrics.horizontalAdvance(text) + self.CLOSED_PADDING)
+        self.updateGeometry()
 
 
 class DateFilterWidget(QWidget):
