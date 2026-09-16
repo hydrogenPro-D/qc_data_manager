@@ -40,6 +40,7 @@ from src.data_access import app_config
 from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
+    canonical_electrode_type,
     normalize_marking,
 )
 from src.data_access.electrodes.electrode_processor import ElectrodeProcessor
@@ -841,7 +842,8 @@ class DbManager:
 
         Lets an imported sample carry its type without anyone typing it: the
         result folder names the electrode, and the database already knows what
-        that electrode is.
+        that electrode is. Recipe variants are folded onto the type they are a
+        variant of, since the SEM tab has a tab per type and not per recipe.
         """
         if self._metadata_cache is None or self._metadata_cache.empty:
             return ""
@@ -852,7 +854,8 @@ class DbManager:
         match = self._metadata_cache[markings == normalize_marking(marking)]
         if match.empty:
             return ""
-        return str(match.iloc[0][str(ElectrodeColumns.FULL_NAME)]).strip()
+        return canonical_electrode_type(
+            match.iloc[0][str(ElectrodeColumns.FULL_NAME)])
 
     def _recorded_samples(self, generation: str) -> set[tuple[str, str]]:
         """Every ``(electrode, spot)`` this generation already has readings for.
@@ -882,7 +885,7 @@ class DbManager:
         if marking_column not in cache or name_column not in cache:
             return {}
         markings = cache[marking_column].astype(str).map(normalize_marking)
-        names = cache[name_column].astype(str).str.strip()
+        names = cache[name_column].map(canonical_electrode_type)
         return {marking: name for marking, name in zip(markings, names) if marking}
 
     def _resolve_types(self, electrodes: set[str], result: ParsedFolder,

@@ -51,6 +51,7 @@ from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
     STATUS_COLUMN,
+    canonical_electrode_type,
 )
 from src.data_access.qc_board.qc_board_columns import (
     ElectrodeType,
@@ -1065,7 +1066,9 @@ class QcBoardWidget(QWidget):
 
         # Column-wise, not iterrows() — at ~12k rows that difference is seconds.
         markings = dataframe[str(ElectrodeColumns.MARKING)].astype(str).str.strip().str.upper()
-        types = dataframe[str(ElectrodeColumns.FULL_NAME)].astype(str).str.strip().str.upper()
+        # Through the canonical map: the board has an anode half and a cathode
+        # half, so a recipe variant belongs in the one it is a variant of.
+        types = dataframe[str(ElectrodeColumns.FULL_NAME)].map(canonical_electrode_type)
         statuses = dataframe[STATUS_COLUMN].astype(str).str.strip()
         self._index = {
             marking: {"type": electrode_type, "status": status}
@@ -1311,7 +1314,7 @@ class QcBoardWidget(QWidget):
             return errors
 
         if entry["type"] not in {str(t) for t in ElectrodeType}:
-            errors.append(f"{marking}: unknown electrode type {entry['type']!r} — "
+            errors.append(f"{marking}: unknown electrode type {entry['type']!r}, "
                           f"expected ANODE or CATHODE")
 
         # An already-tested electrode is allowed in deliberately — that's what

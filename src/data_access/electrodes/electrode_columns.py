@@ -23,6 +23,21 @@ class ElectrodeColumns(Enum):
         return self.value
 
 
+# A recipe variant is still the electrode it is a variant of: the process log
+# names it separately, but the QC board and the SEM tab only have anodes and
+# cathodes. Keyed by the stored Full_name, trimmed and upper-cased. The
+# Electrodes tab is unaffected and still shows the name as recorded.
+ELECTRODE_TYPE_ALIASES: dict[str, str] = {
+    "CATHODE NEW": "CATHODE",
+}
+
+
+def canonical_electrode_type(name) -> str:
+    """'CATHODE NEW' to 'CATHODE'. The type everything downstream works in."""
+    text = str(name or "").strip().upper()
+    return ELECTRODE_TYPE_ALIASES.get(text, text)
+
+
 # Derived columns added by the processor — not stored in dbo.MetaData.
 STATUS_COLUMN = "Status"
 PRIORITY_COLUMN = "Test priority"
