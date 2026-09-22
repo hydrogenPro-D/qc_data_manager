@@ -20,3 +20,5 @@ from qc_sampling_script.gui.sampling_window import run_app  # noqa: E402
 
 if __name__ == "__main__":
     run_app()
+
+

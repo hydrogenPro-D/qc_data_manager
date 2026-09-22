@@ -11,3 +11,5 @@ config/db_connection*.json
 driver/
 *.dat
 data/examples/
+qc_sampling_script/current_intervals.json
+config/sampling_intervals.json

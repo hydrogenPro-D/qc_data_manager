@@ -86,3 +86,51 @@ def sem_edx_image_roots() -> list[Path]:
     expanded = [Path(os.path.expandvars(os.path.expanduser(str(raw))))
                 for raw in roots if str(raw).strip()]
     return sorted(expanded, key=lambda p: len(str(p)), reverse=True)
+
+
+# The two ends of the sampling range that are not a fixed number: whatever the
+# first and last electrode on record happen to be on the day.
+OLDEST = "oldest"
+NEWEST = "newest"
+_EDGES = (OLDEST, NEWEST)
+_DEFAULT_RANGE = (13900, NEWEST)
+
+
+def _edge(value, fallback):
+    """One end of the range: a marking number, or one of the two edge words."""
+    if isinstance(value, str) and value.strip().lower() in _EDGES:
+        return value.strip().lower()
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def sampling_default_range() -> tuple:
+    """Where the QC Sampling tab's range boxes start.
+
+    ``(from, to)``, each a marking number or ``OLDEST``/``NEWEST``. The words
+    are stored rather than resolved to numbers on purpose: "up to the newest
+    electrode" has to stay true tomorrow, and a number written down today
+    would not.
+    """
+    stored = load_config().get("sampling", {}).get("default_range", {})
+    return (_edge(stored.get("from"), _DEFAULT_RANGE[0]),
+            _edge(stored.get("to"), _DEFAULT_RANGE[1]))
+
+
+def set_sampling_default_range(start, end) -> None:
+    """Write the tab's default range back to config.json.
+
+    The whole file is rewritten from what was loaded, so nothing else in it
+    moves. Raises if the file cannot be written: this is somebody pressing Save,
+    and a setting that silently did not save is worse than an error.
+    """
+    config = load_config()
+    section = config.setdefault("sampling", {})
+    section["default_range"] = {"from": _edge(start, _DEFAULT_RANGE[0]),
+                                "to": _edge(end, _DEFAULT_RANGE[1])}
+    path = base_directory() / "config" / "config.json"
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+        handle.write("\n")

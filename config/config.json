@@ -54,5 +54,12 @@
   },
   "database": {
     "production": "dataloggingDev"
+  },
+  "sampling": {
+    "_default_range": "Where the QC Sampling tab's range boxes start. Each end is a marking number, or 'oldest' or 'newest' for the first or last electrode on record. Set from the tab itself, Default range.",
+    "default_range": {
+      "from": 13900,
+      "to": "newest"
+    }
   }
 }

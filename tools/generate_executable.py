@@ -31,6 +31,9 @@ HIDDEN_IMPORTS = [
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
+    # The QC Sampling tab's plots. Named rather than left to the analysis,
+    # because it is imported from one module and only reached at runtime.
+    "pyqtgraph",
 ]
 SPEC_FILE = TOOLS_DIR / f"{EXECUTABLE_NAME}.spec"
 CONFIG_FOLDER = PROJECT_ROOT / "config"

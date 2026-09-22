@@ -22,6 +22,7 @@ import qtawesome as qta
 from src.data_access import app_config, build_backend
 from .electrodes_gui import ElectrodesWidget
 from .qc_board_gui import QcBoardWidget
+from .sampling_gui import QcSamplingWidget
 from .sem_edx_gui import SemEdxWidget
 from .poll_worker import BackgroundJob, DeferredLoad, PollWorker
 from .widgets.no_wheel_tabs import NoWheelTabWidget
@@ -180,6 +181,16 @@ class MainWindow(QMainWindow):
         self.sem_edx_widget.data_changed.connect(self._on_sem_edx_changed)
         self.tabs.addTab(self.sem_edx_widget, "SEM EDX")
 
+        # --- QC Sampling tab: how long the good and bad stretches run, and
+        # what that says about how often to test. It reads nothing of its own:
+        # the electrode frame arrives through _apply_electrodes, the same one
+        # the table above and the board are given, so the statuses it measures
+        # are the ones on screen. That also settles which database it is
+        # looking at, which is whichever one the app is connected to.
+        self.sampling_widget = QcSamplingWidget()
+        self.sampling_widget.show_loading()
+        self.tabs.addTab(self.sampling_widget, "QC Sampling")
+
         main_layout.addWidget(self.tabs, 1)
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
@@ -200,6 +211,9 @@ class MainWindow(QMainWindow):
         Deliberately NOT triggered by a tab change: a switch should cost
         nothing, and the timer picks the change up within one interval anyway.
         """
+        # No entry for the sampling tab: it has no watermark of its own and
+        # nothing to poll for. It rides the electrodes reload instead, through
+        # _apply_electrodes.
         self._widgets_by_key = {
             "electrodes": self.electrodes_widget,
             "qc_board": self.qc_board_widget,
@@ -335,6 +349,25 @@ class MainWindow(QMainWindow):
         else:
             self.electrodes_widget.patch_statuses(frame)
         self.qc_board_widget.load_electrodes(frame)
+        # Re-measured from the same frame. There is no patching to do here:
+        # the run lengths are computed from the whole column, so one changed
+        # status can move every figure on the tab.
+        self._reload_sampling(frame)
+
+    def _reload_sampling(self, frame) -> None:
+        """Hand the sampling tab a new frame, unless somebody is using it.
+
+        Held back while a range is being typed or a slider dragged: re-measuring
+        rebuilds every table on the tab. The frame is still handed over, so the
+        next Analyse picks it up rather than measuring the stale one.
+        """
+        try:
+            if self.sampling_widget.is_busy():
+                self.sampling_widget.frame = frame
+                return
+            self.sampling_widget.load_data(frame)
+        except Exception as e:
+            print(f"Refreshing the sampling tab failed: {e}")
 
     def _on_status_override(self, marking: str, status: str) -> None:
         """Set one electrode's status by hand, then repaint the changed rows."""
@@ -454,6 +487,12 @@ class MainWindow(QMainWindow):
         if self._poll_in_flight:
             return
         widget = self.tabs.currentWidget()
+        # The sampling tab has no watermark of its own: what it measures is the
+        # electrode statuses, so that is what it asks about. Without this it is
+        # in none of the polling keys and nothing is polled at all while it is
+        # the tab on screen.
+        if widget is self.sampling_widget:
+            widget = self.electrodes_widget
         if widget is None or self._is_widget_busy(widget):
             return
         for key, candidate in self._widgets_by_key.items():
@@ -482,6 +521,7 @@ class MainWindow(QMainWindow):
             if key == "electrodes":
                 if result is None:
                     self.electrodes_widget.hide_loading()
+                    self.sampling_widget.hide_loading()
                 else:
                     self._apply_electrodes(result, reload=True)
             elif key == "sem_edx":
@@ -522,6 +562,7 @@ class MainWindow(QMainWindow):
         # what the add dialog offers.
         if changed and key == "electrodes":
             self.qc_board_widget.load_electrodes(result.get("data"))
+            self._reload_sampling(result.get("data"))
 
     @staticmethod
     def _is_widget_busy(widget) -> bool:
