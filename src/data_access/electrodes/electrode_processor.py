@@ -16,8 +16,10 @@ from src.data_access.electrodes.electrode_columns import (
     PRIORITY_FLAG,
     LOCKED_BY_COLUMN,
     VAT_COLUMN,
+    FINALISED_COLUMN,
 )
 from src.data_access.electrodes.status_propagation import propagate_detailed
+from src.data_access.electrodes.waiting_status import waiting_statuses
 
 
 class ElectrodeProcessor:
@@ -30,7 +32,10 @@ class ElectrodeProcessor:
                  vat_provider=None,
                  vat_pending_provider=None,
                  ongoing_provider=None,
-                 pinned_provider=None) -> None:
+                 pinned_provider=None,
+                 finalised_provider=None,
+                 findings_provider=None,
+                 revisited_provider=None) -> None:
         # Handed in, read once per backend rather than per refresh. The
         # backend owns where they come from, which keeps this class pure data
         # in, data out and lets tests pass a dict.
@@ -48,9 +53,9 @@ class ElectrodeProcessor:
         # {marking: vat}, joined in from the process log. Absent when that log
         # is not readable, and then the column is left off entirely rather than
         # shown empty for every row.
-        # Which decisions are still cards on the board, as opposed to
-        # verdicts already finalised. Both sweep; only the first locks a row,
-        # because only the first can still be dragged somewhere else.
+        # Which electrodes still hold a card, decided or not, as opposed to
+        # verdicts already finalised. A card can still be dragged somewhere
+        # else, and every row it drives moves with it, so it is what locks.
         self._board_provider = board_provider
         self._vat_provider = vat_provider
         # The column is kept, empty, while the process log is still being read,
@@ -66,6 +71,15 @@ class ElectrodeProcessor:
         # electrode: if a row is not locked, the status you pick is the status
         # you get.
         self._pinned_provider = pinned_provider
+        # {marking: when its status settled}. Read on every process(), so a
+        # finalise on another machine fills the column on the next poll.
+        self._finalised_provider = finalised_provider
+        # marking -> the SEM and IC findings recorded against a card, for
+        # telling the two waits apart.
+        self._findings_provider = findings_provider
+        # {marking: the live verdict whose re-test unfroze it}. Those move
+        # with that card even when another decision settles them.
+        self._revisited_provider = revisited_provider
 
     def set_base_status(self, marking: str, status: str) -> None:
         """Record a status set by hand, so the next process() shows it.
@@ -112,6 +126,7 @@ class ElectrodeProcessor:
         out[PRIORITY_COLUMN] = markings.map(
             lambda marking: PRIORITY_FLAG if marking in priorities else "")
         out[LOCKED_BY_COLUMN] = markings.map(locked_by).fillna("")
+        out[FINALISED_COLUMN] = markings.map(self._finalised()).fillna("")
         vats = self._vats()
         if vats or self._vats_pending():
             # A dict lookup per marking, never a join against the process log.
@@ -122,6 +137,10 @@ class ElectrodeProcessor:
     def _vats(self) -> dict[str, str]:
         """``{marking: vat}``, empty when the process log is out of reach."""
         return dict(self._vat_provider() or {}) if self._vat_provider else {}
+
+    def _finalised(self) -> dict[str, str]:
+        """``{marking: when its status settled}``, empty where nothing has."""
+        return dict(self._finalised_provider() or {}) if self._finalised_provider else {}
 
     def _vats_pending(self) -> bool:
         """Whether the vat join has yet to answer for the first time."""
@@ -135,7 +154,8 @@ class ElectrodeProcessor:
         columns = [c.value for c in ElectrodeColumns]
         if self._vats() or self._vats_pending():
             columns.append(VAT_COLUMN)
-        return columns + [STATUS_COLUMN, PRIORITY_COLUMN, LOCKED_BY_COLUMN]
+        return columns + [STATUS_COLUMN, FINALISED_COLUMN, PRIORITY_COLUMN,
+                          LOCKED_BY_COLUMN]
 
     def status_for(self, df: pd.DataFrame) -> pd.Series:
         """Per-electrode QC status, joined on the marking.
@@ -175,6 +195,14 @@ class ElectrodeProcessor:
         waiting = str(ElectrodeStatus.NEEDS_TESTING)
         flagged = {marking for marking in settled | priorities
                    if effective.get(marking) == waiting}
+
+        # What the rest of the zone is really waiting on. After ``flagged``,
+        # which needs the plain status to find the queue, and never over a
+        # test-first electrode: that one is the instruction, not a wait.
+        effective.update(waiting_statuses(
+            effective, causes, set(self._ongoing_provider() or ())
+            if self._ongoing_provider else set(),
+            flagged, self._findings_provider))
         # Locked by, not caused by. A finalised verdict causes plenty of
         # these statuses but cannot move any more, so pinning one of its
         # electrodes by hand is safe and the operator is left free to do it.
@@ -188,5 +216,13 @@ class ElectrodeProcessor:
             # matches the "because of" the rest of the app shows.
             primary = sources.get(marking, "")
             locked_by[marking] = primary if primary in live else sorted(live)[0]
+
+        # Unfrozen by a re-test but claimed by nobody, so the sweeps credited
+        # them to nothing. setdefault, since a real cause is the better answer
+        # where there is one.
+        revisited = self._revisited_provider() if self._revisited_provider else {}
+        for marking, source in (revisited or {}).items():
+            if source:
+                locked_by.setdefault(marking, source)
         return (markings.map(effective).fillna(str(ElectrodeStatus.NOT_TESTED)),
                 flagged, locked_by)

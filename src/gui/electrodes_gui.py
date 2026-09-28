@@ -6,6 +6,8 @@ injected callables, so it can be unit-tested with fakes and hand-built frames.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QToolButton, QDialog,
     QPushButton, QScrollArea,
@@ -36,7 +38,8 @@ from .widgets.skeleton_overlay import (SkeletonOverlay, SHIMMER_TICK_MS,
 from .widgets.status_donut_widget import StatusDonutWidget, render_donut_png
 from src.data_access.electrodes.status_propagation import electrode_number
 from .widgets.status_edit_dialog import StatusEditDialog
-from .date_display import format_timestamp_for_display
+from .date_display import (format_utc_date_for_display,
+                           format_utc_timestamp_for_display)
 from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
@@ -45,6 +48,8 @@ from src.data_access.electrodes.electrode_columns import (
     PRIORITY_COLUMN,
     PRIORITY_FLAG,
     LOCKED_BY_COLUMN,
+    FINALISED_COLUMN,
+    NEVER_STORED,
     status_family,
 )
 
@@ -60,6 +65,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     # column the frame does not carry.
     VAT_COLUMN: "Vat",
     STATUS_COLUMN: "Status",
+    FINALISED_COLUMN: "Status finalised",
 }
 
 # Display text for the two statuses that are decided by testing the electrode
@@ -109,6 +115,8 @@ CHART_ORDER: tuple[ElectrodeStatus, ...] = (
     ElectrodeStatus.TESTED_AND_SCRAPPED,
     ElectrodeStatus.SCRAPPED,
     ElectrodeStatus.NEEDS_TESTING,
+    ElectrodeStatus.WAITING_FOR_SEM,
+    ElectrodeStatus.WAITING_FOR_IC,
     ElectrodeStatus.NOT_TESTED,
     ElectrodeStatus.TEST_ONGOING,
 )
@@ -136,10 +144,6 @@ def status_value(label) -> str:
     return _STORED_BY_LABEL.get(text, text)
 
 
-# The test-first flag rides along in the Status cell rather than taking a column
-# of its own; the delegate strips it back off to pick the badge style.
-PRIORITY_SEPARATOR = "   "
-
 # The ring beside the table. Sized so the panel holding it stays narrower than
 # the table it sits next to.
 DONUT_DIAMETER = 212
@@ -159,9 +163,6 @@ def status_pill_style(value: str) -> PillStyle | None:
     text = str(value).strip()
     for status, style in PILL_STYLES.items():
         if text == status or text.startswith(status):
-            if (status == status_label(ElectrodeStatus.NEEDS_TESTING)
-                    and PRIORITY_FLAG in text):
-                return NEEDS_TESTING_FIRST_STYLE
             return style
     return None
 
@@ -194,6 +195,10 @@ ROW_TINTS: dict[str, str] = {
     # Amber: an instruction rather than a verdict, so it shouldn't read as
     # either good or bad.
     str(ElectrodeStatus.NEEDS_TESTING): "#FDE8C4",
+    # Paler ambers: these are waits, not instructions, and they should not
+    # compete with the queue itself for attention.
+    str(ElectrodeStatus.WAITING_FOR_SEM): "#FBF0DC",
+    str(ElectrodeStatus.WAITING_FOR_IC): "#EDF0DC",
     str(ElectrodeStatus.NOT_TESTED): "#F3F4F6",
     # Blue: the only family not already meaning good, bad or waiting, and it
     # reads as work in progress rather than as an outcome.
@@ -212,6 +217,10 @@ ROW_ACCENTS: dict[str, str] = {
     str(ElectrodeStatus.TESTED_AND_SCRAPPED): "#7A0F2E",
     str(ElectrodeStatus.SCRAPPED): "#E45A52",
     str(ElectrodeStatus.NEEDS_TESTING): "#E09A26",
+    # The two waits sit on the same amber axis as the queue they belong to,
+    # one softened and one turned towards olive so they are told apart.
+    str(ElectrodeStatus.WAITING_FOR_SEM): "#E8C98A",
+    str(ElectrodeStatus.WAITING_FOR_IC): "#C3CE8A",
     str(ElectrodeStatus.NOT_TESTED): "#555B64",
     str(ElectrodeStatus.TEST_ONGOING): "#3566C7",
 }
@@ -225,6 +234,8 @@ PILL_STYLES: dict[str, PillStyle] = {
         color="#8E1537", background="#8E1537", text="#FFFFFF"),
     status_label(ElectrodeStatus.SCRAPPED): PillStyle(color="#8E1537"),
     status_label(ElectrodeStatus.NEEDS_TESTING): PillStyle(color="#B45309"),
+    status_label(ElectrodeStatus.WAITING_FOR_SEM): PillStyle(color="#946A1F"),
+    status_label(ElectrodeStatus.WAITING_FOR_IC): PillStyle(color="#5F6E20"),
     status_label(ElectrodeStatus.NOT_TESTED): PillStyle(color="#555B64"),
     status_label(ElectrodeStatus.TEST_ONGOING): PillStyle(
         color="#1D4ED8", background="#DBEAFE"),
@@ -285,16 +296,11 @@ def ongoing_width_text(label: str) -> str:
         return label
     return ONGOING_WIDEST + text[len(base):].lstrip(".")
 
-# The "!" is reserved for the electrodes to pull first, so it stays meaningful
-# instead of appearing on every one of the hundreds needing testing.
-NEEDS_TESTING_FIRST_STYLE = PillStyle(color="#B45309", glyph="!")
-
-# The longest badge the Status column can ever hold: the longest status, its
-# glyph, and the test-first suffix. Sizing for this keeps the column wide
-# enough no matter which rows Qt happens to measure.
+# The longest badge the Status column can ever hold: the longest status and
+# its glyph. Sizing for this keeps the column wide enough no matter which rows
+# Qt happens to measure.
 WIDEST_STATUS_LABEL = max(
-    (f"{style.glyph}  {status}{PRIORITY_SEPARATOR}{PRIORITY_FLAG}"
-     for status, style in PILL_STYLES.items()),
+    (f"{style.glyph}  {status}" for status, style in PILL_STYLES.items()),
     key=len,
 )
 
@@ -355,7 +361,8 @@ class ElectrodesWidget(QWidget):
             FilterDropdown(FILTER_TYPE, "Type"),
             FilterDropdown(FILTER_RECIPE, "Recipe"),
             FilterDropdown(FILTER_VAT, "Vat"),
-        ], number_range="Electrode", stacked=True, with_clear=True)
+        ], number_range="Electrode", stacked=True, with_clear=True,
+           extra_date_range="Status finalised")
         self.filter_bar.set_options(
             FILTER_STATUS, [status_label(s) for s in ElectrodeStatus])
         self.filter_bar.changed.connect(self._render)
@@ -508,6 +515,7 @@ class ElectrodesWidget(QWidget):
         chart_layout.setContentsMargins(14, 0, 5, 0)
         chart_layout.setSpacing(8)
         chart_layout.addWidget(self.status_chart, 0)
+        chart_layout.addWidget(self._build_scrap_panel(), 0)
         chart_layout.addWidget(self._build_test_first_panel(), 1)
         chart_layout.addWidget(self.report_button, 0)
         chart_panel.setLayout(chart_layout)
@@ -620,11 +628,14 @@ class ElectrodesWidget(QWidget):
     @staticmethod
     def _parse_dates(df: pd.DataFrame | None):
         """Parse the Date column once per load, so filtering stays vectorised.
-        Mixed UTC offsets are normalised to UTC before the date is taken."""
+        Mixed UTC offsets are normalised to UTC, then put on the operator's
+        clock: the Date column beside the filter reads local, and a month list
+        built from UTC would disagree with it either side of midnight."""
         date_column = str(ElectrodeColumns.DATE)
         if df is None or df.empty or date_column not in df.columns:
             return None
-        return pd.to_datetime(df[date_column], errors="coerce", utc=True)
+        parsed = pd.to_datetime(df[date_column], errors="coerce", utc=True)
+        return parsed.dt.tz_convert(dt.datetime.now().astimezone().tzinfo)
 
     def _refresh_filter_options(self) -> None:
         """Offer only the electrode types and months the data actually holds."""
@@ -749,6 +760,23 @@ class ElectrodesWidget(QWidget):
                 mask &= days <= end
             mask &= self._source_dates.notna()
 
+        # The other date on the row, and a different question: when QC settled
+        # the electrode, not when the line made it. An electrode nothing has
+        # settled has no such date, so it drops out rather than being kept on
+        # the strength of a blank.
+        finalised = self.filter_bar.extra_date_range
+        if finalised is not None and finalised.is_set() and FINALISED_COLUMN in df:
+            settled = pd.to_datetime(df[FINALISED_COLUMN], errors="coerce",
+                                     utc=True).dt.tz_convert(
+                dt.datetime.now().astimezone().tzinfo)
+            start, end = finalised.range()
+            days = settled.dt.date
+            if start:
+                mask &= days >= start
+            if end:
+                mask &= days <= end
+            mask &= settled.notna()
+
         search = self.filter_bar.search_text().lower()
         if search:
             # Match across every column, so an operator can type a marking, a
@@ -785,17 +813,21 @@ class ElectrodesWidget(QWidget):
         date_column = str(ElectrodeColumns.DATE)
         if date_column in display_df.columns:
             # DATETIMEOFFSET → 'dd.mm.yyyy HH:MM'; df_source keeps the raw value.
-            display_df[date_column] = display_df[date_column].map(format_timestamp_for_display)
+            display_df[date_column] = display_df[date_column].map(
+                format_utc_timestamp_for_display)
+
+        # Same shape as the Date column, but converted: these are stamped
+        # in UTC by the database and the operator reads a local clock.
+        if FINALISED_COLUMN in display_df.columns:
+            display_df[FINALISED_COLUMN] = display_df[FINALISED_COLUMN].map(
+                format_utc_timestamp_for_display)
 
         if STATUS_COLUMN in display_df.columns:
             display_df[STATUS_COLUMN] = display_df[STATUS_COLUMN].map(status_label)
 
-        # The test-first flag is shown beside the status, not in its own column.
+        # The test-first flag has no column and no longer rides on the badge:
+        # the panel beside the table is where the queue is read.
         if PRIORITY_COLUMN in display_df.columns:
-            flagged = display_df[PRIORITY_COLUMN].astype(str).str.strip() == PRIORITY_FLAG
-            display_df.loc[flagged, STATUS_COLUMN] = (
-                display_df.loc[flagged, STATUS_COLUMN].astype(str)
-                + PRIORITY_SEPARATOR + PRIORITY_FLAG)
             display_df = display_df.drop(columns=[PRIORITY_COLUMN])
 
         display_df = display_df[[c for c in COLUMN_DISPLAY_NAMES if c in display_df.columns]]
@@ -868,7 +900,7 @@ class ElectrodesWidget(QWidget):
             "Electrode": flagged[str(ElectrodeColumns.MARKING)].astype(str).values,
             "Type": flagged[str(ElectrodeColumns.FULL_NAME)].astype(str).values,
             "Date": flagged[str(ElectrodeColumns.DATE)].map(
-                format_timestamp_for_display).values,
+                format_utc_timestamp_for_display).values,
         }))
 
     def statuses_in_scope(self) -> list[str]:
@@ -899,6 +931,61 @@ class ElectrodesWidget(QWidget):
                 if label in counts:
                     counts[label] = int(count)
         return counts, {chart_label(s): c for s, c in ROW_ACCENTS.items()}
+
+    # An electrode that will not ship, whichever way it got there: rejected by
+    # a neighbour's fault, failed on the rig, or passed and destroyed by the
+    # test itself.
+    SCRAP_STATUSES = (ElectrodeStatus.SCRAPPED,
+                      ElectrodeStatus.TESTED_AND_RELEASED,
+                      ElectrodeStatus.TESTED_AND_SCRAPPED)
+
+    def _scrap_rate(self) -> tuple[int, int]:
+        """``(scrapped, shown)`` over the rows currently on screen.
+
+        Measured against everything shown, tested or not, so it is the same
+        share the ring above it draws and the report foots to. It therefore
+        moves with the untested backlog as well as with quality.
+        """
+        if self.df_visible is None or STATUS_COLUMN not in self.df_visible.columns:
+            return 0, 0
+        shown = self.df_visible[STATUS_COLUMN].astype(str).str.strip()
+        scrapped = shown.isin([str(s) for s in self.SCRAP_STATUSES]).sum()
+        return int(scrapped), int(len(shown))
+
+    def _update_scrap_rate(self) -> None:
+        """Refresh the scrap line under the donut."""
+        scrapped, shown = self._scrap_rate()
+        share = f"{scrapped / shown * 100:.1f} %" if shown else "n/a"
+        self.scrap_value.setText(f"{scrapped:,}".replace(",", " ")
+                                 + f"   {share}")
+
+    def _build_scrap_panel(self) -> QWidget:
+        """The scrapped figure, under a rule so it reads apart from the ring.
+
+        Always on show, whatever the status filter is doing, because it is
+        the one number management asks for. Shares the ring's denominator, so
+        the two agree.
+        """
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setStyleSheet("color: #E4E7EB;")
+
+        caption = QLabel("Scrapped")
+        caption.setStyleSheet("color: #1F1F1F; font-size: 12px; font-weight: 700;")
+        self.scrap_value = QLabel()
+        self.scrap_value.setStyleSheet(
+            "color: #8E1537; font-size: 15px; font-weight: 700;")
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 2, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(rule)
+        layout.addWidget(caption)
+        layout.addWidget(self.scrap_value)
+        panel = QWidget()
+        panel.setLayout(layout)
+        self._update_scrap_rate()
+        return panel
 
     def _build_zoom_widget(self) -> QWidget:
         """Minus, the current scale, plus, as one widget for the filter bar."""
@@ -950,6 +1037,7 @@ class ElectrodesWidget(QWidget):
     def _update_status_chart(self) -> None:
         """Feed the donut the status split of the rows currently shown."""
         self.status_chart.update_data(*self._status_split())
+        self._update_scrap_rate()
 
     def _status_at(self, row_index: int) -> str | None:
         """The status of a rendered row."""
@@ -987,9 +1075,12 @@ class ElectrodesWidget(QWidget):
             self.load_data(dataframe)
             return
 
-        # A board move changes the test-first flags and the lock owner as well
-        # as the status, so all three are diffed and adopted together.
-        tracked = [c for c in (STATUS_COLUMN, PRIORITY_COLUMN, LOCKED_BY_COLUMN)
+        # A board move changes the test-first flags, the lock owner and when
+        # the status settled as well as the status itself, so all four are
+        # diffed and adopted together. Leaving one out kept a stale cell: the
+        # backend recomputed it and the patch threw the new value away.
+        tracked = [c for c in (STATUS_COLUMN, PRIORITY_COLUMN, LOCKED_BY_COLUMN,
+                               FINALISED_COLUMN)
                    if c in dataframe.columns and c in self.df_source.columns]
         differs = None
         for column in tracked:
@@ -1169,27 +1260,33 @@ class ElectrodesWidget(QWidget):
         keyed by what is on screen, so writing the stored value here left the
         two tested statuses matching nothing and the cell drew empty.
         """
-        status = status_label(self._status_at(row_index) or "")
-        if (self.df_visible is not None and row_index < len(self.df_visible)
-                and PRIORITY_COLUMN in self.df_visible.columns
-                and str(self.df_visible.iloc[row_index][PRIORITY_COLUMN]).strip()
-                == PRIORITY_FLAG):
-            return f"{status}{PRIORITY_SEPARATOR}{PRIORITY_FLAG}"
-        return status
+        return status_label(self._status_at(row_index) or "")
+
+    def _finalised_display(self, row_index: int) -> str:
+        """The Status finalised cell's text, formatted as _render does."""
+        if (self.df_visible is None or row_index >= len(self.df_visible)
+                or FINALISED_COLUMN not in self.df_visible.columns):
+            return ""
+        return format_utc_timestamp_for_display(
+            self.df_visible.iloc[row_index][FINALISED_COLUMN])
 
     def _repaint_row(self, row_index: int) -> None:
         """Rewrite one rendered row's status text and tint, in place."""
         if self.table is None or row_index >= self.table.rowCount():
             return
-        status_header = COLUMN_DISPLAY_NAMES[STATUS_COLUMN]
+        # Both derived cells, not just the status: setting one by hand stamps
+        # the finalise time too, and repainting the status alone left that
+        # showing until the next full reload.
+        rewrite = {COLUMN_DISPLAY_NAMES[STATUS_COLUMN]: self._status_display,
+                   COLUMN_DISPLAY_NAMES[FINALISED_COLUMN]: self._finalised_display}
         for column in range(self.table.columnCount()):
             item = self.table.item(row_index, column)
             if item is None:
                 continue
             header = self.table.horizontalHeaderItem(column)
             name = header.text() if header else ""
-            if name == status_header:
-                item.setText(self._status_display(row_index))
+            if name in rewrite:
+                item.setText(rewrite[name](row_index))
             DataTableWidget._apply_cell_style(
                 item, self._cell_style(row_index, name, item.text()))
 
@@ -1223,26 +1320,25 @@ class ElectrodesWidget(QWidget):
                 subtitle_noun="note").exec()
             return
 
-        # Released here means SELLABLE, so a tested electrode is not one: it was
-        # destroyed to produce the verdict.
-        families = (visible[STATUS_COLUMN].astype(str)
-                    .map(status_family).map(status_label))
-
-        # The tested ones are left OUT of the range list rather than listed
-        # between the stretches they interrupt. There is nothing to ship in
-        # them, and one tested electrode every thirty turned a handful of
-        # ranges into a page of one-row entries. Their count still foots the
-        # table below, so the report reconciles.
-        #
-        # Leaving a gap in the numbering is safe: a range ends when the STATUS
-        # changes, not when a number is missing, so the stretch either side of
-        # a tested electrode closes up into one.
-        consumed = families == status_label(ElectrodeStatus.TESTED_AND_RELEASED)
+        # The status as stored, not its family: a tested electrode gets its own
+        # entry. Merged into the neighbours it sits between, a label like
+        # "B14267 - B14292: Released" silently spanned the three electrodes in
+        # it that were destroyed on the rig, and only the count gave it away.
+        # Whether they appear at all is the filter's business, not this one's.
+        families = visible[STATUS_COLUMN].astype(str).map(status_label)
         markings = visible[str(ElectrodeColumns.MARKING)].astype(str)
+        # To the day, not the minute: one "mark all as done" stamps its whole
+        # batch with one time, but a hand edit carries its own, and grouping on
+        # those split a stretch at every corrected electrode.
+        if FINALISED_COLUMN in visible.columns:
+            settled = visible[FINALISED_COLUMN].map(format_utc_date_for_display)
+        else:
+            settled = pd.Series("", index=visible.index)
+
         # Oldest first, which is both how a range has to be built (it needs
         # ascending numbers) and how the report reads.
         ranges = collapse_to_ranges(
-            list(markings[~consumed]), list(families[~consumed]))
+            list(markings), list(families), list(settled))
 
         # The summary, in the shape the old workbook reported it. Counted from
         # the STATUS rather than the range family, because the split is simply
@@ -1483,13 +1579,13 @@ class ElectrodesWidget(QWidget):
         current = status_label(
             self.df_visible.iloc[self._edit_row][STATUS_COLUMN])
 
-        # Test ongoing is left out: it is read off the QC board on every
-        # render, so a hand set one would be overwritten the moment the card
-        # moved, or linger over an electrode that is not on the board at all.
+        # The derived ones are left out: they are worked out on every
+        # render, so a hand set one would be overwritten the moment a card
+        # moved, or linger over an electrode nothing is testing.
         dialog = StatusEditDialog(
             self, marking=marking, current=current,
             statuses=[status_label(s) for s in ElectrodeStatus
-                      if s is not ElectrodeStatus.TEST_ONGOING])
+                      if s not in NEVER_STORED])
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.chosen:
             return
 

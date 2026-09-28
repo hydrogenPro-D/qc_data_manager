@@ -53,11 +53,18 @@ CHART_WIDTH = 185
 # separator: a cell narrower than its number wraps it onto a second line, and
 # the separators are non-breaking spaces throughout for the same reason.
 COUNT_WIDTH = 50
+# Room for dd.mm.yyyy and no more.
+FINALISED_WIDTH = 70
+# 'B14267 - B14292' and little else: the width it gives up goes to Status,
+# which is the only column whose text can run long.
+RANGE_WIDTH = 120
 # The chart legend's two number columns. Both sized for their widest possible
 # contents, five digits and "100%": a cell narrower than what it holds gets
-# broken across two lines, and "100" over "%" is the giveaway.
-LEGEND_VALUE_WIDTH = 44
-LEGEND_SHARE_WIDTH = 38
+# broken across two lines, and "100" over "%" is the giveaway. Kept as tight as
+# that allows, because every point they give up goes to the status name beside
+# them, and the longest of those needs all of it to stay on one line.
+LEGEND_VALUE_WIDTH = 36
+LEGEND_SHARE_WIDTH = 30
 SHARE_WIDTH = 40
 
 # How much bigger than life the preview draws its pages. A page is 516 points
@@ -188,6 +195,7 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
         f"<td>{item.label}</td>"
         f"<td align='right'>{_grouped(item.count)}</td>"
         f"<td bgcolor='{tints.get(item.status, '#FFFFFF')}'>{item.status}</td>"
+        f"<td>{getattr(item, 'finalised', '') or '&nbsp;'}</td>"
         f"</tr>"
         for item in ranges
     )
@@ -260,13 +268,13 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
       <div>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td width="54%" valign="top">
+            <td width="50%" valign="top">
               {summary_table("Production", production, total_shown)}
               <p style="font-size:7pt; margin:10px 0 0 0;">&nbsp;</p>
               {summary_table("QC", qc, qc_total)}
             </td>
             <td width="4%">&nbsp;</td>
-            <td width="42%" valign="top">
+            <td width="46%" valign="top">
               <p align="right" style="font-size:9pt; margin:0 0 4px 0;">
                 <b>Status breakdown</b></p>
               <img src="{CHART_RESOURCE}" width="{CHART_WIDTH}"
@@ -312,10 +320,13 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
         <table width="100%" cellpadding="3" cellspacing="0" border="1"
                bordercolor="#E1E1E1" style="font-size:7.5pt; margin:0;">
           <tr bgcolor="#55BDBD">
-            <th align="left"><font color="#FFFFFF">Electrode Range</font></th>
+            <th align="left" width="{RANGE_WIDTH}">
+              <font color="#FFFFFF">Electrode Range</font></th>
             <th align="right" width="{COUNT_WIDTH}">
               <font color="#FFFFFF">Count</font></th>
-            <th align="left" width="150"><font color="#FFFFFF">Status</font></th>
+            <th align="left"><font color="#FFFFFF">Status</font></th>
+            <th align="left" width="{FINALISED_WIDTH}">
+              <font color="#FFFFFF">Finalised</font></th>
           </tr>
           {range_rows}
         </table>

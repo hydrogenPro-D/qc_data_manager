@@ -175,6 +175,14 @@ def propagate_detailed(
             continue
         effective[marking] = _TEST_ONGOING
         priorities.discard(marking)
+        # Credited to ITSELF, replacing whatever swept it. What this electrode
+        # now reads comes from its own card and nothing else, so naming the
+        # scrap that happened to reach it sent the operator off to finalise a
+        # decision that is not holding this row at all. A pinned one is
+        # credited here too: every sweep skips it, so it had no cause and no
+        # lock despite sitting on the board.
+        sources[marking] = marking
+        causes[marking] = {marking}
     return effective, sources, priorities, causes
 
 
@@ -414,9 +422,14 @@ def _clear_resolved_doubt(status: list[str], order: list[str], sources: dict[str
     found: list[int] = []
     beyond = None
     for position in positions:
-        # A hand set electrode bounds the run rather than joining it, whatever
-        # it reads. It is not doubt this release gets to settle.
-        if status[position] != _NEEDS_TESTING or order[position] in (pinned or ()):
+        # A hand set electrode is not doubt this release gets to settle, so it
+        # is stepped over rather than claimed. It does NOT end the run: ending
+        # it there hid whatever lay past it, and a stretch that really ran into
+        # a scrap looked clear, so the release settled doubt belonging to a
+        # fault it does not stand between.
+        if order[position] in (pinned or ()):
+            continue
+        if status[position] != _NEEDS_TESTING:
             beyond = position
             break
         found.append(position)

@@ -397,6 +397,100 @@ class CheckableFilterCombo(NoScrollComboBox):
         self.updateGeometry()
 
 
+class DateRangeWidget(QWidget):
+    """A plain from/to range over a second date column.
+
+    Deliberately not a DateFilterWidget: no All or Month, and each end is
+    optional. An end left on "Any" does not bound that side, and with both on
+    "Any" the filter is off, which is how it stays out of the way until
+    somebody wants it. Its own caption is what tells it apart from the date
+    filter beside it.
+    """
+
+    changed = pyqtSignal()
+
+    def __init__(self, caption: str = "Date", parent=None) -> None:
+        super().__init__(parent)
+        # Which field each calendar popup belongs to, so an unset one can be
+        # opened on a useful month. Keyed by the popup, which is what raises
+        # the event.
+        self._calendars: dict = {}
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        title = QLabel(caption)
+        title.setStyleSheet(_LABEL_STYLE)
+        layout.addWidget(title, 0)
+
+        self.start_edit = self._edit()
+        self.end_edit = self._edit()
+        to_label = QLabel("to")
+        to_label.setStyleSheet(_LABEL_STYLE)
+
+        clear = QPushButton("Any")
+        clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear.setStyleSheet(_MODE_BUTTON_STYLE)
+        clear.setToolTip("Stop filtering on this date")
+        clear.clicked.connect(self.reset)
+
+        layout.addWidget(self.start_edit, 0)
+        layout.addWidget(to_label, 0)
+        layout.addWidget(self.end_edit, 0)
+        layout.addWidget(clear, 0)
+        self.setLayout(layout)
+
+    def _edit(self) -> DatePickerEdit:
+        """One end of the range, showing "Any" until it is set.
+
+        The minimum date doubles as the empty value, which is Qt's way of
+        giving a date field a blank state at all.
+        """
+        edit = DatePickerEdit()
+        edit.setDisplayFormat("dd.MM.yyyy")
+        edit.setMinimumDate(QDate(1900, 1, 1))
+        edit.setSpecialValueText("Any")
+        edit.setDate(edit.minimumDate())
+        edit.dateChanged.connect(lambda _d: self.changed.emit())
+        calendar = edit.calendarWidget()
+        if calendar is not None:
+            self._calendars[calendar] = edit
+            calendar.installEventFilter(self)
+        return edit
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt naming)
+        """Open an unset field on this month rather than on the year 1900.
+
+        The empty value IS the minimum date, so left alone Qt opens the popup
+        four centuries ago and every date is a scroll away.
+        """
+        if event.type() == QEvent.Type.Show and obj in self._calendars:
+            edit = self._calendars[obj]
+            if edit.date() == edit.minimumDate():
+                today = QDate.currentDate()
+                obj.setCurrentPage(today.year(), today.month())
+        return super().eventFilter(obj, event)
+
+    def range(self) -> tuple:
+        """``(start, end)`` as dates, either side None when left on Any."""
+        def value(edit: DatePickerEdit):
+            date = edit.date()
+            return None if date == edit.minimumDate() else date.toPyDate()
+        return value(self.start_edit), value(self.end_edit)
+
+    def is_set(self) -> bool:
+        """Whether this filter is bounding anything at all."""
+        return any(end is not None for end in self.range())
+
+    def reset(self) -> None:
+        """Both ends back to Any, and one redraw for the pair."""
+        for edit in (self.start_edit, self.end_edit):
+            edit.blockSignals(True)
+            edit.setDate(edit.minimumDate())
+            edit.blockSignals(False)
+        self.changed.emit()
+
+
 class DateFilterWidget(QWidget):
     """All / single month / explicit range, collapsed into one (start, end)."""
 
@@ -616,7 +710,8 @@ class FilterBarWidget(QWidget):
                  search_placeholder: str = "Search",
                  count_noun: str = "electrodes",
                  number_range: str = "", stacked: bool = False,
-                 with_clear: bool = False) -> None:
+                 with_clear: bool = False,
+                 extra_date_range: str = "") -> None:
         super().__init__(parent)
         self._dropdowns = dropdowns
         self._count_noun = count_noun
@@ -626,6 +721,9 @@ class FilterBarWidget(QWidget):
         # Only the tabs that ask for it: a caption turns it on and names it.
         self._number_caption = number_range
         self.number_range: NumberRangeWidget | None = None
+        # A second date range over a different column, named by its caption.
+        self._extra_date_caption = extra_date_range
+        self.extra_date_range: DateRangeWidget | None = None
         # One row per group rather than one long strip. Past four dropdowns and
         # a range a single row is wider than the window, and a filter strip that
         # scrolls sideways can hide a filter that is switched on.
@@ -679,6 +777,12 @@ class FilterBarWidget(QWidget):
             self.date_filter = DateFilterWidget()
             self.date_filter.changed.connect(self._relay)
             second.addWidget(self.date_filter, 0)
+
+        # Last on the row, after the date filter it must not be mistaken for.
+        if self._extra_date_caption:
+            self.extra_date_range = DateRangeWidget(self._extra_date_caption)
+            self.extra_date_range.changed.connect(self._relay)
+            second.addWidget(self.extra_date_range, 0)
 
         for line in rows:
             line.addStretch(1)
@@ -745,11 +849,12 @@ class FilterBarWidget(QWidget):
             combo.blockSignals(True)
             combo.set_checked([])
             combo.blockSignals(False)
-        for widget in (self.number_range, self.date_filter, self.search_input):
+        for widget in (self.number_range, self.date_filter,
+                       self.extra_date_range, self.search_input):
             if widget is None:
                 continue
             widget.blockSignals(True)
-            if isinstance(widget, DateFilterWidget):
+            if isinstance(widget, (DateFilterWidget, DateRangeWidget)):
                 widget.reset()
             else:
                 widget.clear()
