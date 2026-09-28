@@ -1222,17 +1222,26 @@ class QcBoardWidget(QWidget):
                 blocked[str(marking)] = missing
         return blocked
 
-    def _refuse_move(self, blocked: dict, stage: QcStage) -> None:
-        """Say which test each card is still waiting on."""
+    def _confirm_move(self, blocked: dict, stage: QcStage) -> bool:
+        """Warn which test each card is still waiting on, and ask anyway.
+
+        A warning rather than a refusal: the board records what QC did, and an
+        operator with a reason to move a card early knows something the
+        recorded findings do not.
+        """
         lines = []
         for marking, missing in blocked.items():
             names = " and ".join(missing).replace("The IC result", "the IC result")
             lines.append(f"{marking}: {names} is not recorded yet."
                          if len(missing) == 1
                          else f"{marking}: {names} are not recorded yet.")
-        ValidationErrorScrollDialog(
-            parent=self, errors=lines,
-            title=f"Not ready for {STAGE_LABELS.get(stage, stage)}").exec()
+        where = STAGE_LABELS.get(stage, stage)
+        body = "\n".join(lines)
+        dialog = ConfirmationDialog(
+            parent=self, title=f"Not ready for {where}",
+            message=f"{body}\n\nMove there anyway?",
+            header_color="#FF9800", yes_text="Move anyway", no_text="Cancel")
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     def _on_electrodes_dropped(self, markings: list, stage: QcStage, _type) -> None:
         """Move everything that was dropped, then redraw once.
@@ -1247,12 +1256,11 @@ class QcBoardWidget(QWidget):
         if self.store is None:
             return
 
-        blocked = self._too_far(list(markings), stage)
-        if blocked:
-            self._refuse_move(blocked, stage)
-            markings = [m for m in markings if str(m) not in blocked]
-            if not markings:
-                return
+        # Asked once for the whole handful, not once per card: five warnings to
+        # dismiss for one drag is worse than the thing being warned about.
+        incomplete = self._too_far(list(markings), stage)
+        if incomplete and not self._confirm_move(incomplete, stage):
+            return
         # Every move runs: any() would stop at the first one that worked and
         # leave the rest of the handful behind.
         moved = [m for m in markings if self.store.move(str(m), stage)]
@@ -1268,11 +1276,14 @@ class QcBoardWidget(QWidget):
         if self.store is not None:
             on_board = {m for m in self._index if self.store.contains(m)}
 
-        # Split by whether the electrode still awaits a verdict. Needs testing
-        # and Not Tested are the ones you would actually put through QC;
-        # anything already Released or Scrapped only comes up for a re-test.
+        # Split by whether the electrode still awaits a verdict. The two waits
+        # belong here with Needs testing: all three are electrodes in a fault's
+        # doubt with nothing decided about them, which is exactly what you put
+        # through QC. Only Released or Scrapped comes up for a re-test.
         awaiting = {str(ElectrodeStatus.NOT_TESTED),
-                    str(ElectrodeStatus.NEEDS_TESTING)}
+                    str(ElectrodeStatus.NEEDS_TESTING),
+                    str(ElectrodeStatus.WAITING_FOR_SEM),
+                    str(ElectrodeStatus.WAITING_FOR_IC)}
 
         not_tested, tested = [], []
         for marking, entry in self._index.items():

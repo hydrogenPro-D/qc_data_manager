@@ -163,6 +163,15 @@ class QcBoardDbStore:
     def contains(self, marking: str) -> bool:
         return str(marking).strip() in self._entries
 
+    def on_board(self) -> set[str]:
+        """Every electrode holding a card, decided or not.
+
+        The union of ``ongoing_electrodes`` and the decided ones: what they
+        share is that the card can still be dragged, so nothing about them is
+        settled yet.
+        """
+        return set(self._entries)
+
     def stage_of(self, marking: str) -> QcStage | None:
         entry = self._entries.get(str(marking).strip())
         return QcStage(entry["stage"]) if entry else None
@@ -224,15 +233,39 @@ class QcBoardDbStore:
                       for marking, entry in self._archived.items()
                       if (entry.get("from") or "") in ("", marking)}
 
+        # A verdict being revisited on the board counts as replaced too, not
+        # only an archived one. The card sitting in Passed or Failed is the
+        # current answer, so the sweep frozen from its previous answer has to
+        # give way to it at once, rather than leaving the electrodes around it
+        # condemned by a result that no longer stands until somebody finalises.
+        live = set(self.status_overrides())
+
         stale = set()
         for marking, entry in self._archived.items():
             source = str(entry.get("from") or "")
             if not source or source == marking:
                 continue
+            if source in live:
+                stale.add(marking)
+                continue
             current = verdict_at.get(source, "")
             if current and current > str(entry.get("at") or ""):
                 stale.add(marking)
         return stale
+
+    def revisited_by(self) -> dict[str, str]:
+        """``{electrode: the live verdict that unfroze it}``.
+
+        Dropping a frozen sweep because its verdict is being re-tested changes
+        what these electrodes read, whether or not the new sweep then claims
+        them: one on the far side may end up settled by a different pass
+        entirely. They are still moving with that card, so they lock with it.
+        """
+        live = set(self.status_overrides())
+        return {marking: str(entry.get("from") or "")
+                for marking, entry in self._archived.items()
+                if (entry.get("from") or "") in live
+                and (entry.get("from") or "") != marking}
 
     def archived_statuses(self) -> dict[str, str]:
         """``{marking: status}`` for everything already finalised."""

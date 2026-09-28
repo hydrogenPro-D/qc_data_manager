@@ -215,13 +215,18 @@ class DbManager:
         self._electrodes = ElectrodeProcessor(
             status_by_marking=load_status_from_db(self._session),
             overrides_provider=self._sweeping_decisions,
-            board_provider=self._qc_board.status_overrides,
+            # Every card, not only the decided ones: an electrode being
+            # tested drives its own row and has to lock it.
+            board_provider=self._qc_board.on_board,
             base_overrides_provider=self._settled_statuses,
             settled_priorities_provider=self._settled_priorities,
             vat_provider=lambda: self._vats,
             vat_pending_provider=self.vats_pending,
             ongoing_provider=self._qc_board.ongoing_electrodes,
-            pinned_provider=lambda: set(self._manual_edits))
+            pinned_provider=lambda: set(self._manual_edits),
+            finalised_provider=self._finalised_times,
+            findings_provider=self._qc_board.findings,
+            revisited_provider=self._qc_board.revisited_by)
         # Which quantities each sheet shows, from config.json. Read per
         # generation on first use, and one processor per generation and
         # electrode type, since none of the four measures quite the same thing.
@@ -1014,6 +1019,24 @@ class DbManager:
         ``board_provider``, which is the live half of this on its own.
         """
         return {**self._settled_verdicts(), **self._qc_board.status_overrides()}
+
+    def _finalised_times(self) -> dict[str, str]:
+        """``{marking: when its status settled}``, for the Status finalised column.
+
+        Two clocks, the later one wins: a verdict frozen by "mark all as done"
+        and a correction made by hand here. An electrode back on the board is
+        left out, since its status is being revisited and no longer settled.
+        """
+        stale = self._qc_board.stale_inferences()
+        live = self._qc_board.on_board()
+        times = {marking: when
+                 for marking, when in self._qc_board.archived_times().items()
+                 if marking not in stale}
+        for marking, when in self._manual_edits.items():
+            if when > times.get(marking, ""):
+                times[marking] = when
+        return {marking: when for marking, when in times.items()
+                if when and marking not in live}
 
     def _settled_priorities(self) -> set[str]:
         """Frozen test-first flags, minus the superseded ones.
