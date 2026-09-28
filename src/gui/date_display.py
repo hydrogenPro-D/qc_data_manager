@@ -61,3 +61,37 @@ def format_timestamp_for_display(value: Any) -> str:
     """Render a creation timestamp as ``dd.mm.yyyy HH:MM``; blank/NULL → ''."""
     ts = parse_timestamp(value)
     return ts.strftime("%d.%m.%Y %H:%M") if ts else ""
+
+
+def format_date_for_display(value: Any) -> str:
+    """The same timestamp, to the day: ``dd.mm.yyyy``; blank/NULL → ''.
+
+    What the report groups its ranges by, so two finalises on one day read as
+    one entry rather than as two identical-looking rows.
+    """
+    ts = parse_timestamp(value)
+    return ts.strftime("%d.%m.%Y") if ts else ""
+
+
+def _to_local(ts: dt.datetime) -> dt.datetime:
+    """A stamp on the operator's clock. A naive one is taken as UTC."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.timezone.utc)
+    return ts.astimezone()
+
+
+def format_utc_timestamp_for_display(value: Any) -> str:
+    """A UTC stamp as ``dd.mm.yyyy HH:MM`` on the local clock.
+
+    The QC tables stamp themselves with SYSUTCDATETIME and store no offset,
+    so a finalise made at 13:23 local was arriving on screen as 11:23.
+    """
+    ts = parse_timestamp(value)
+    return _to_local(ts).strftime("%d.%m.%Y %H:%M") if ts else ""
+
+
+def format_utc_date_for_display(value: Any) -> str:
+    """The same, to the day. Converted first: a finalise at 23:30 UTC belongs
+    to the next day locally, and the report groups by day."""
+    ts = parse_timestamp(value)
+    return _to_local(ts).strftime("%d.%m.%Y") if ts else ""

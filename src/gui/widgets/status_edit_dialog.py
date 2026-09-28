@@ -78,8 +78,12 @@ class StatusEditDialog(QDialog):
         self.combo.setStyleSheet(_COMBO_STYLE)
         self.combo.addItems(statuses or [])
         index = self.combo.findText(current)
-        if index >= 0:
-            self.combo.setCurrentIndex(index)
+        # A status that cannot be set by hand is not on the list, so nothing is
+        # preselected: landing on the first entry meant Save marked a waiting
+        # electrode as Tested and passed without anybody choosing it.
+        self.combo.setCurrentIndex(index)
+        if index < 0:
+            self.combo.setPlaceholderText(f"{current}, pick a new status")
         cancel = QPushButton("Cancel")
         cancel.setMinimumHeight(38)
         cancel.setStyleSheet(SECONDARY_BUTTON_STYLE)
@@ -119,5 +123,10 @@ class StatusEditDialog(QDialog):
         return label
 
     def _on_save(self) -> None:
+        """Nothing picked is not a change: a derived status leaves the combo
+        empty, and saving that would write whatever happened to be first."""
+        if self.combo.currentIndex() < 0:
+            self.reject()
+            return
         self.chosen = self.combo.currentText().strip()
         self.accept()

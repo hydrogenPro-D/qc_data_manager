@@ -57,6 +57,11 @@ LOCKED_BY_COLUMN = "Locked by"
 # scrap's safety margin, where the fault most likely started or stopped.
 PRIORITY_FLAG = "Test first"
 
+# When this electrode's status stopped moving: marked as done on the QC board,
+# or set by hand here. Empty while it is still on the board, since a card that
+# can be dragged has not settled anything yet.
+FINALISED_COLUMN = "Status finalised"
+
 
 def status_family(status: str) -> str:
     """Collapse a status to its outcome, for the range list in the report.
@@ -104,10 +109,25 @@ class ElectrodeStatus(Enum):
     # the card is decided or removed. That is also why it is not offered as a
     # status somebody can set by hand.
     TEST_ONGOING = "Test ongoing"
+    # What a doubting electrode is really waiting on. Stored as Needs testing;
+    # which of the two it reads depends on how far the electrode being tested
+    # in its zone has got, so both are worked out on every render like
+    # TEST_ONGOING and neither is in qc_data.electrode_status_kind.
+    WAITING_FOR_SEM = "Waiting for additional SEM approval"
+    WAITING_FOR_IC = "Waiting for IC release / not QC sample"
 
     def __str__(self) -> str:
         """Return the string value of the status."""
         return self.value
+
+
+# Worked out on every render and never written: the database's
+# electrode_status_kind does not hold them, and none may be set by hand.
+NEVER_STORED = frozenset({
+    ElectrodeStatus.TEST_ONGOING,
+    ElectrodeStatus.WAITING_FOR_SEM,
+    ElectrodeStatus.WAITING_FOR_IC,
+})
 
 
 # Values written by an older build, mapped to the spelling used now. Anything
