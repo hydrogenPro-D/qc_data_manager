@@ -1457,8 +1457,14 @@ class ElectrodesWidget(QWidget):
             (status_label(ElectrodeStatus.SCRAPPED),
              "Presumably bad electrode, should not be sold."),
             (status_label(ElectrodeStatus.NEEDS_TESTING),
-             "A neighbouring electrode failed the tests, so this one should be "
-             "tested too."),
+             "The electrode that should be tested next."),
+            (status_label(ElectrodeStatus.WAITING_FOR_SEM),
+             "In doubt because a nearby electrode failed. No SEM result that "
+             "could settle it has come back yet."),
+            (status_label(ElectrodeStatus.WAITING_FOR_IC),
+             "In doubt because a nearby electrode failed. The electrode being "
+             "tested for it has passed SEM, so it is now waiting on the IC "
+             "result."),
             (status_label(ElectrodeStatus.NOT_TESTED),
              "A new electrode that has not been tested yet."),
             (status_label(ElectrodeStatus.TEST_ONGOING),
