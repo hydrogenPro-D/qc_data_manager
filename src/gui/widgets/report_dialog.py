@@ -190,15 +190,19 @@ def build_report_html(ranges, production: list, qc: list, tints: dict[str, str],
     """
     heading = title.strip() or default_report_title()
 
-    range_rows = "".join(
-        f"<tr>"
-        f"<td>{item.label}</td>"
-        f"<td align='right'>{_grouped(item.count)}</td>"
-        f"<td bgcolor='{tints.get(item.status, '#FFFFFF')}'>{item.status}</td>"
-        f"<td>{getattr(item, 'finalised', '') or '&nbsp;'}</td>"
-        f"</tr>"
-        for item in ranges
-    )
+    # The tint goes on every cell rather than on the row: Qt's rich text
+    # honours bgcolor on a td and ignores it on a tr, so a row-level fill
+    # simply would not print.
+    range_rows = ""
+    for item in ranges:
+        fill = f" bgcolor='{tints.get(item.status, '#FFFFFF')}'"
+        range_rows += (
+            f"<tr>"
+            f"<td{fill}>{item.label}</td>"
+            f"<td{fill} align='right'>{_grouped(item.count)}</td>"
+            f"<td{fill}>{item.status}</td>"
+            f"<td{fill}>{getattr(item, 'finalised', '') or '&nbsp;'}</td>"
+            f"</tr>")
 
     def summary_table(title: str, rows: list, base: int) -> str:
         """One summary table, its rows indented by depth.
