@@ -17,11 +17,15 @@ either way once it is handed over.
 
 from pathlib import Path
 import json
+import os
 import shutil
 import subprocess
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Run from tools/, so src is not importable without this. Before any src import.
+sys.path.insert(0, str(PROJECT_ROOT))
+
 TOOLS_DIR = Path(__file__).resolve().parent
 ENTRY_SCRIPT = PROJECT_ROOT / "main.py"
 DIST_PATH = PROJECT_ROOT / "dist"
@@ -37,6 +41,12 @@ CONFIG_FOLDER = PROJECT_ROOT / "config"
 DRIVER_FOLDER = PROJECT_ROOT / "driver"
 EXECUTABLE_FOLDER = DIST_PATH / EXECUTABLE_NAME
 CONNECTION_FILE = CONFIG_FOLDER / "db_connection.json"
+VERSION_FILE = CONFIG_FOLDER / "version.json"
+ASSETS_FOLDER = PROJECT_ROOT / "assets"
+# Shipped as data as well as burnt into the exe: the .ico is what Windows shows
+# on the taskbar, the .png is what anything scaling the artwork wants.
+ASSET_FILES = ("app_icon.ico", "app_icon.png")
+ICON_FILE = ASSETS_FOLDER / ASSET_FILES[0]
 
 # The databases a bundle may target, the same pair the migrations guard on.
 # Test first, because that is what plain Enter picks.
@@ -78,6 +88,66 @@ def confirm_database(database: str) -> None:
                   f"to continue: ").strip()
     if typed != database:
         raise SystemExit("Not confirmed, nothing was built.")
+
+
+def choose_version(database: str) -> str:
+    """Decide the version for this build, before anything slow runs.
+
+    ONLY A RELEASE OFFERS TO BUMP, and only after asking. A build for the test
+    database keeps the current number: the twenty test builds between two
+    releases should not burn twenty version numbers.
+
+    Touches no files. If the build then fails, nothing has recorded a release
+    that never shipped.
+    """
+    from src.app_version import next_version
+
+    current = _current_version()
+    if database == KNOWN_DATABASES[0]:
+        print(f"\nTest build, keeping version {current or '1.0'} (no bump).")
+        return current or "1.0"
+
+    proposed = next_version(current)
+    question = f"\nThis build is for {database}, so it is a release.\n"
+    question += f"  current version: {current or 'none yet'}\n"
+    question += f"  bump to:         {proposed}\n"
+    question += "Bump the version? [y/N]: "
+    answer = input(question).strip().lower()
+    if answer in ("y", "yes"):
+        return proposed
+    print(f"Keeping version {current or '1.0'}.")
+    return current or "1.0"
+
+
+def _current_version() -> str | None:
+    """The last released version, from the repo file.
+
+    Reads the path directly rather than through app_version's resolver. This
+    script is never frozen, so the resolver would answer the same today, but
+    keeping them apart means a later change to it cannot silently leave the
+    script reading one file and writing another.
+    """
+    if not VERSION_FILE.exists():
+        return None
+    try:
+        return json.loads(VERSION_FILE.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        return None
+
+
+def _write_version_file(config_dest: Path, version: str) -> None:
+    """Record the release, in the repo and in the bundle.
+
+    THE REPO COPY IS THE RECORD of what last shipped, and the build script
+    reads it to know what to propose next. It has to be committed, or a fresh
+    clone starts again from nothing and the next release proposes 1.0 over the
+    top of the history.
+    """
+    from src.app_version import write_version_file
+
+    info = write_version_file(VERSION_FILE, version)
+    _copy_file(VERSION_FILE, config_dest / "version.json")
+    print(f"Version {info['version']}, built {info['released_at']}")
 
 
 def _read_connection_file() -> dict:
@@ -155,6 +225,14 @@ def _bootstrap_spec() -> None:
     ]
     for hidden_import in HIDDEN_IMPORTS:
         command.extend(["--hidden-import", hidden_import])
+    # The icon has to be asked for here too. A bootstrapped spec is otherwise
+    # written without one, and every later build reuses that spec.
+    if ICON_FILE.exists():
+        command.extend(["--icon", str(ICON_FILE)])
+    for name in ASSET_FILES:
+        asset = ASSETS_FOLDER / name
+        if asset.exists():
+            command.extend(["--add-data", f"{asset}{os.pathsep}assets"])
     command.append(str(ENTRY_SCRIPT))
     _run_pyinstaller(command)
 
@@ -180,6 +258,8 @@ def build_executable() -> None:
 
     database = ask_database(suggested)
     confirm_database(database)
+    # Everything that needs asking is asked here, so the build runs unattended.
+    version = choose_version(database)
 
     if SPEC_FILE.exists():
         _build_from_existing_spec()
@@ -192,6 +272,8 @@ def build_executable() -> None:
     # tested, and a bundle must say which database it was built for.
     username = _write_bundle_connection(config_dest / "db_connection.json",
                                         database)
+    # After PyInstaller, not before: a build that failed records no release.
+    _write_version_file(config_dest, version)
     # The app runs this at startup if the ODBC driver isn't installed.
     _copy_file(DRIVER_FOLDER / "msodbcsql.msi", EXECUTABLE_FOLDER / "driver" / "msodbcsql.msi")
 
@@ -209,6 +291,7 @@ def _announce(database: str, username: str) -> None:
     line = "=" * 62
     print(f"\n{line}")
     print(f"  THIS BUILD TALKS TO: {database}")
+    print(f"  version:             {_current_version() or 'none'}")
     print(f"  signing in as:       {username}")
     if database != KNOWN_DATABASES[0]:
         print(f"  This is not the test database. Do not hand it out as one.")

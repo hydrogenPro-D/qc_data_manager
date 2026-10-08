@@ -325,6 +325,45 @@ def format_number(value, decimals: int) -> str:
     return EMPTY if pd.isna(number) else f"{float(number):.{decimals}f}"
 
 
+def _sorted(frame: pd.DataFrame, column: str, ascending: bool) -> pd.DataFrame:
+    """Order by one column, numerically where the column holds numbers.
+
+    Sorted on the stored value, not on what the cell shows: the measurements
+    are rounded to one decimal on the way to the screen, so sorting the text
+    would put 3.50 and 3.46 the wrong way round, and a date reads dd.mm.yyyy,
+    which does not sort as text at all.
+
+    A blank counts as the smallest value, so increasing puts the empty ones
+    first and decreasing puts them last. They are samples nobody has filled in
+    yet, and reading them as "nothing" rather than as an exception keeps the
+    arrow meaning one thing. Stable, so a second sort keeps the order of the
+    first within each group.
+    """
+    if not column or column not in frame.columns or frame.empty:
+        return frame
+
+    values = frame[column]
+    text = values.astype(str).str.strip()
+    blank = values.isna() | (text == "")
+    numbers = pd.to_numeric(values, errors="coerce")
+
+    if (numbers.notna() | blank).all():
+        # Every value that is there is a number.
+        key = numbers
+    elif (text.str.fullmatch(r"[A-Za-z]*\d+") | blank).all():
+        # A marking or a zoom: a prefix and a number. Sorted on the number, or
+        # B9 lands after B14134, which is the one order nobody wants to read a
+        # list of electrodes in. Deliberately narrow: a note that happens to
+        # start with a date is not an identifier and stays text.
+        key = pd.to_numeric(text.str.extract(r"(\d+)", expand=False),
+                            errors="coerce")
+    else:
+        key = text.str.lower().where(~blank)
+    order = key.sort_values(ascending=ascending, kind="stable",
+                            na_position="first" if ascending else "last").index
+    return frame.loc[order].reset_index(drop=True)
+
+
 def _as_number(text: str) -> float | None:
     """A typed figure as a number, or None when it is not one.
 
@@ -1740,6 +1779,13 @@ class SemEdxTypeWidget(QWidget):
         self.df_source: pd.DataFrame | None = None
         # What is currently rendered (df_source after every active filter).
         self.df_visible: pd.DataFrame | None = None
+        # Which column a header click asked for, by its header text, and which
+        # way. Empty means production order, which is what the tab opens on.
+        self._sort_header = ""
+        self._sort_ascending = True
+        # Header text to the column behind it. to_display_frame only renames,
+        # so the two line up position by position.
+        self._source_of: dict[str, str] = {}
 
         self.init_ui()
 
@@ -1798,6 +1844,8 @@ class SemEdxTypeWidget(QWidget):
         # Any width left over is shared out, so the table fills the pane
         # without a column ever being squeezed below its content.
         self.table.set_fill_remaining_width(True)
+        self.table.enable_sorting()
+        self.table.sort_requested.connect(self._on_sort_requested)
         # A minimum of 0 means "use the size hint", which includes the header's
         # own minimum plus the (deliberately thick) scrollbar, and that becomes
         # the window's width floor. An explicit minimum lets columns compress.
@@ -1976,7 +2024,9 @@ class SemEdxTypeWidget(QWidget):
                 lambda v: "" if v is None or v != v else str(v).lower())
             mask &= haystack.apply(lambda row: search in " ".join(row), axis=1)
 
-        return df[mask].reset_index(drop=True)
+        return _sorted(df[mask].reset_index(drop=True),
+                       self._source_of.get(self._sort_header, ""),
+                       self._sort_ascending)
 
     def _render(self) -> None:
         """Render the filtered frame; ``df_source`` keeps the raw values."""
@@ -1992,8 +2042,10 @@ class SemEdxTypeWidget(QWidget):
             self._sync_picked_row()
             return
 
-        display_df = self.names.to_display_frame(
-            self.df_visible.drop(columns=list(HIDDEN_COLUMNS), errors="ignore"))
+        source_df = self.df_visible.drop(columns=list(HIDDEN_COLUMNS),
+                                         errors="ignore")
+        display_df = self.names.to_display_frame(source_df)
+        self._source_of = dict(zip(display_df.columns, source_df.columns))
         images_header = COLUMN_DISPLAY_NAMES[IMAGES_COLUMN]
         if images_header in display_df.columns:
             # The path itself is never shown, a button takes its place.
@@ -2004,9 +2056,17 @@ class SemEdxTypeWidget(QWidget):
             self._place_image_buttons(images_header)
             self._frozen.freeze_through(
                 COLUMN_DISPLAY_NAMES[str(SemEdxColumns.POSITION)])
+            if self._sort_header:
+                self.table.show_sort_indicator(self._sort_header,
+                                               self._sort_ascending)
         except Exception as e:
             print(f"Error loading SEM EDX table: {e}")
         self._sync_picked_row()
+
+    def _on_sort_requested(self, header: str, ascending: bool) -> None:
+        """Re-sort the frame and render again, rather than sorting the table."""
+        self._sort_header, self._sort_ascending = header, ascending
+        self._render()
 
     def _place_image_buttons(self, images_header: str) -> None:
         """Put a View button in the images column of every row that has a folder.

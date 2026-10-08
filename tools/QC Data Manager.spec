@@ -5,7 +5,8 @@ a = Analysis(
     ['C:\\Users\\CsengerMolnár\\OneDrive - HydrogenPro ASA\\Dokumenter\\GitHub\\qc_data_manager\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('../assets/app_icon.ico', 'assets'),
+           ('../assets/app_icon.png', 'assets')],
     hiddenimports=['PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets'],
     hookspath=[],
     hooksconfig={},
@@ -32,6 +33,9 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Windows needs the .ico for the exe. The .png is shipped too, in
+    # COLLECT below, because anything that scales the artwork wants it.
+    icon='../assets/app_icon.ico',
 )
 coll = COLLECT(
     exe,

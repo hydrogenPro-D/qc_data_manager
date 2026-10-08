@@ -9,6 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.data_access.electrodes.electrode_columns import (
+    DECIDED,
     ElectrodeColumns,
     ElectrodeStatus,
     STATUS_COLUMN,
@@ -126,7 +127,28 @@ class ElectrodeProcessor:
         out[PRIORITY_COLUMN] = markings.map(
             lambda marking: PRIORITY_FLAG if marking in priorities else "")
         out[LOCKED_BY_COLUMN] = markings.map(locked_by).fillna("")
-        out[FINALISED_COLUMN] = markings.map(self._finalised()).fillna("")
+        # Blank wherever nothing has actually settled, whatever the database
+        # holds, and it can hold a stale date for either case:
+        #
+        # * The status is not an outcome. Not Tested, Needs testing, both waits
+        #   and Test ongoing are all steps on the way to one, so there is
+        #   nothing to date: the electrode has not finished.
+        # * Held by a card still on the board. That card has not been marked as
+        #   done, so this status can still change with it. The date underneath
+        #   belongs to an older sweep the card interrupted, which is worse than
+        #   no date: it says the row has read this since a day it did not.
+        #
+        # A hand set status is the exception to the second: nothing holds it,
+        # and the date on it is when the operator set it.
+        outcomes = {str(status) for status in DECIDED}
+        held = out[LOCKED_BY_COLUMN].astype(str) != ""
+        by_hand = markings.isin(self.pinned())
+        settled = (out[STATUS_COLUMN].astype(str).isin(outcomes)
+                   & (~held | by_hand))
+        # The one place it is dropped, so the column, the filter and the report
+        # all agree.
+        out[FINALISED_COLUMN] = markings.map(self._finalised()).fillna("").where(
+            settled, "")
         vats = self._vats()
         if vats or self._vats_pending():
             # A dict lookup per marking, never a join against the process log.

@@ -71,6 +71,17 @@ _TEST_ONGOING = str(ElectrodeStatus.TEST_ONGOING)
 PRIORITY_DISTANCE = SCRAP_MARGIN + 1
 
 
+def claimable(status: str) -> bool:
+    """Whether any sweep could still move an electrode reading this.
+
+    A scrapped one is the case that matters: nothing claims it. A release steps
+    over it and another scrap leaves its verdict alone, so no card anywhere can
+    change what it says. Only the verdict that condemned it being re-tested can
+    lift it, and that is a different question.
+    """
+    return str(status) in _UNMEASURED
+
+
 def electrode_number(marking: str) -> int | None:
     """'B14174' → 14174. None when the marking carries no number."""
     match = re.search(r"(\d+)", str(marking))
@@ -150,7 +161,7 @@ def propagate_detailed(
             priorities |= _needs_testing(status, order, sources, causes,
                                          marking, *lanes[marking], pinned=held)
     _apply_release_sweeps(status, position, decisions, order, sources,
-                          causes, priorities, lanes, held)
+                          causes, priorities, lanes, held, set(ongoing or ()))
 
     effective = dict(zip(order, status))
     for marking in markings:
@@ -175,14 +186,18 @@ def propagate_detailed(
             continue
         effective[marking] = _TEST_ONGOING
         priorities.discard(marking)
-        # Credited to ITSELF, replacing whatever swept it. What this electrode
-        # now reads comes from its own card and nothing else, so naming the
-        # scrap that happened to reach it sent the operator off to finalise a
-        # decision that is not holding this row at all. A pinned one is
-        # credited here too: every sweep skips it, so it had no cause and no
-        # lock despite sitting on the board.
+        # NAMED as its own cause, but ADDED to the ones it already had. What
+        # this electrode now reads comes from its own card, so naming the scrap
+        # that happened to reach it sent the operator off to finalise a
+        # decision that is not holding this row at all. Its zone is a different
+        # question: the card is still standing in the fault's doubt, and that
+        # is what says whose wait it can end. Replacing the set took the card
+        # out of its own zone, so no electrode in that zone could see it and
+        # they all read as waiting for a SEM result that had already come back.
+        # A pinned one lands here too: every sweep skips it, so it had no cause
+        # and no lock despite sitting on the board.
         sources[marking] = marking
-        causes[marking] = {marking}
+        causes.setdefault(marking, set()).add(marking)
     return effective, sources, priorities, causes
 
 
@@ -345,7 +360,8 @@ def _apply_release_sweeps(status: list[str], position: dict[int, int],
                           sources: dict[str, str], causes: dict[str, set[str]],
                           priorities: set[str],
                           lanes: dict[str, tuple[list[int], int, bool]],
-                          pinned: set[str] | None = None) -> None:
+                          pinned: set[str] | None = None,
+                          ongoing: set[str] | None = None) -> None:
     """Spread each release as far as the evidence actually reaches.
 
     Two separate things happen:
@@ -377,13 +393,27 @@ def _apply_release_sweeps(status: list[str], position: dict[int, int],
         if marking in lanes:
             run, at, _bounded = lanes[marking]
             step = at - 1
+            # Collected before anything is claimed, because one electrode in
+            # the stretch can cancel the whole of it. See below.
+            stretch: list[int] = []
             # A hand set electrode ends the walk the way a verdict does. It is
             # one, just written by an operator rather than read off a rig.
             while (step >= 0 and status[run[step]] == _NOT_TESTED
                    and order[run[step]] not in (pinned or ())):
-                status[run[step]] = _RELEASED
-                _credit(sources, causes, order[run[step]], marking)
+                stretch.append(run[step])
                 step -= 1
+            # A TEST UNDER WAY INSIDE THE STRETCH CANCELS ALL OF IT. Somebody
+            # is on a rig with one of these electrodes right now, and if it
+            # comes back scrapped the fault condemns its neighbours both ways,
+            # which is the opposite of what this sweep is about to say. The
+            # whole stretch, not just the far side: a fault at the electrode
+            # under test reaches past it in both directions. They stay Not
+            # Tested until that test answers, and if it releases, that release
+            # sweeps the stretch itself.
+            if not any(order[index] in (ongoing or ()) for index in stretch):
+                for index in stretch:
+                    status[index] = _RELEASED
+                    _credit(sources, causes, order[index], marking)
 
         # Both ways, but not to the same end. Behind it the electrodes are
         # RELEASED: the vat was plating properly over that stretch. Ahead of it

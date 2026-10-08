@@ -1029,8 +1029,11 @@ class DbManager:
         """
         stale = self._qc_board.stale_inferences()
         live = self._qc_board.on_board()
+        # settled_times, not archived_times: a stretch that was unfrozen by a
+        # test and released again settled when it came back, not when the sweep
+        # that test interrupted was written down.
         times = {marking: when
-                 for marking, when in self._qc_board.archived_times().items()
+                 for marking, when in self._qc_board.settled_times().items()
                  if marking not in stale}
         for marking, when in self._manual_edits.items():
             if when > times.get(marking, ""):
@@ -1113,16 +1116,60 @@ class DbManager:
         base = self._electrodes.base_status()
         # The same inputs the tab renders with. A finalise that swept differently
         # would freeze statuses nobody was shown.
+        # THE REOPENED VERDICTS SWEEP TOO, not only the cards being finalised.
+        # A card on the board holds the whole stretch around it, and the far
+        # half of that stretch is held by an older verdict rather than by this
+        # card. Without that verdict sweeping here, half the stretch was given
+        # the new date and half kept the date of the sweep the card
+        # interrupted. Only the verdicts whose stretches are actually reopened:
+        # every verdict ever recorded would re-sweep the whole table and
+        # rewrite rows that have nothing to do with the card in hand.
+        reopened = self._qc_board.reopened_sources()
+        settled = self._settled_verdicts()
+        sweeping = {**{m: s for m, s in settled.items() if m in reopened},
+                    **decisions}
         effective, sources, priorities, _causes = propagate_detailed(
-            markings, base, decisions, vats=self._vats,
+            markings, base, sweeping, vats=self._vats,
             pinned=set(self._manual_edits))
+        # What another card still holds is not this finalise's to freeze. Those
+        # stretches are unfrozen because of a card that is staying on the board,
+        # and freezing them here would stamp them with somebody else's time.
+        held = self._qc_board.stale_inferences(
+            board=self._qc_board.on_board() - set(decisions))
+        frozen = self._to_freeze(effective, base, decisions, held, sources)
+        return frozen, {m for m in priorities if m in frozen}
+
+    @staticmethod
+    def _to_freeze(effective: dict[str, str], base: dict[str, str],
+                   decisions: dict[str, str], held: set[str],
+                   sources: dict[str, str]) -> dict[str, tuple[str, str]]:
+        """Which electrodes a finalise records, and what each was drawn from.
+
+        THE DECIDED ELECTRODES ARE ALWAYS RECORDED, before any other test and
+        whatever else is true of them. Finalising is what takes a card off the
+        board and the archive is what consumes it, so an empty plan leaves the
+        card where it is and the button looks broken. ``held`` cost us this
+        once: a card whose own frozen row happened to be out of date filtered
+        itself out of its own finalise.
+
+        Everything else is recorded only where it moved, and one already
+        reading Released for another reason is not re-recorded.
+
+        ``held`` leaves alone what another card on the board is holding, so one
+        operator's finalise does not stamp somebody else's open work. It never
+        applies to what THESE decisions caused: a card's own sweep is the card's
+        to freeze. Leaving those out cost us the scrapped electrodes beside a
+        failure, which kept an older row that a card elsewhere then held, so
+        they showed no date and locked to an electrode that cannot move them.
+        """
         not_tested = str(ElectrodeStatus.NOT_TESTED)
-        frozen = {
+        return {
             marking: (status, sources.get(marking, marking))
             for marking, status in effective.items()
-            if status != base.get(marking, not_tested) or marking in decisions
+            if marking in decisions
+            or (status != base.get(marking, not_tested)
+                and (sources.get(marking) in decisions or marking not in held))
         }
-        return frozen, {m for m in priorities if m in frozen}
 
     def undo_last_action(self) -> bool:
         """Reverse the most recent board change, whatever kind it was."""
