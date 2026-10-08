@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 import qtawesome as qta
 
+from src.app_version import UNKNOWN, current_version
 from src.data_access import app_config, build_backend
 from .electrodes_gui import ElectrodesWidget
 from .qc_board_gui import QcBoardWidget
@@ -30,6 +31,9 @@ from .styles.tab_styles import MAIN_TAB_STYLE
 from .styles.tooltip_styles import TOOLTIP_STYLE
 
 APP_TITLE = "QC Data Manager"
+# Backstop only. The splash normally goes when the Electrodes read lands, a
+# couple of seconds in; this is so a read that never lands cannot strand it.
+SPLASH_HOLD_MS = 15000
 TEST_DB_WARNING = "Connected to test database"
 # Loud on purpose. Someone who does not notice this will believe a morning of
 # decisions went to the real board.
@@ -71,7 +75,14 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(APP_TITLE)
+        # Named rather than numbered when there is no release to name. Somebody
+        # sending a screenshot of a bug is then telling you, without being
+        # asked, whether they are on a release or running from source, and that
+        # changes where to look first.
+        version = current_version()
+        title = APP_TITLE + ("  (dev build)" if version == UNKNOWN
+                             else f"  v{version}")
+        self.setWindowTitle(title)
         # The frame and nothing else. Everything expensive is in start(), so
         # the window is up a moment after the double click rather than a few
         # seconds later, which read to operators as nothing having happened.
@@ -79,6 +90,26 @@ class MainWindow(QMainWindow):
         starting.setAlignment(Qt.AlignmentFlag.AlignCenter)
         starting.setStyleSheet(STARTING_STYLE)
         self.setCentralWidget(starting)
+        self._splash = None
+
+    # ------------------------------------------------------------------
+    # Splash
+    # ------------------------------------------------------------------
+    def hold_splash(self, splash) -> None:
+        """Keep the startup splash up until the first table has rows.
+
+        The frame is on screen seconds before the Electrodes read lands, and an
+        empty window reads to an operator as the app having failed to start.
+        """
+        self._splash = splash
+        # A read that never lands must not leave the icon sitting there.
+        QTimer.singleShot(SPLASH_HOLD_MS, self._release_splash)
+
+    def _release_splash(self) -> None:
+        """Fade the splash out. Safe to call more than once."""
+        splash, self._splash = self._splash, None
+        if splash is not None:
+            splash.finish(self)
 
     def start(self) -> None:
         """Build the backend and the tabs, with the window already showing.
@@ -524,6 +555,10 @@ class MainWindow(QMainWindow):
                     self.sampling_widget.hide_loading()
                 else:
                     self._apply_electrodes(result, reload=True)
+                # The visible tab now has its rows, so the splash has nothing
+                # left to cover. After the table is built, not before, or the
+                # icon would uncover an empty one.
+                self._release_splash()
             elif key == "sem_edx":
                 if not result:
                     self.sem_edx_widget.hide_loading()
@@ -613,27 +648,55 @@ def _report_uncaught(kind, value, trace) -> None:
         pass            # a dialog about a dialog helps nobody
 
 
-def run_app():
-    """Entry point: build the window, or show a titled error dialog and exit."""
-    app = QApplication(sys.argv)
+def run_app(app=None, splash=None):
+    """Entry point: build the window, or show a titled error dialog and exit.
+
+    main.py passes both: it builds the QApplication first so it can claim the
+    taskbar identity and set the icon before any window exists, and puts the
+    splash up before this module is even imported. Both are optional so
+    run_app() still works on its own.
+    """
+    app = app or QApplication.instance() or QApplication(sys.argv)
     sys.excepthook = _report_uncaught
     try:
-        app.setWindowIcon(qta.icon("fa6s.flask", color="#14b8a6"))
+        # Only when nothing has set one, so main.py's icon stands. The flask is
+        # the fallback for anything calling run_app directly.
+        if app.windowIcon().isNull():
+            from src.assets import ICON_ICO, asset_path
+            from PyQt6.QtGui import QIcon
+
+            icon = asset_path(ICON_ICO)
+            app.setWindowIcon(QIcon(str(icon)) if icon.exists()
+                              else qta.icon("fa6s.flask", color="#14b8a6"))
         # A tooltip is its own top level window, so it has to be styled here
         # rather than on the widget that owns it.
         app.setStyleSheet(TOOLTIP_STYLE)
         window = MainWindow()
+        # One decision about which monitor, not two that happen to agree: the
+        # splash picked the screen under the cursor, the window follows it.
+        if splash is not None and splash.screen() is not None:
+            window.setGeometry(splash.screen().availableGeometry())
         window.showMaximized()
         # Let the empty frame actually paint before the slow part starts.
         app.processEvents()
+        if splash is not None:
+            # Handed over rather than dismissed here: the window drops it once
+            # the Electrodes table has rows, which is seconds after this.
+            window.hold_splash(splash)
         window.start()
         sys.exit(app.exec())
     except FileNotFoundError as e:
+        # Off the screen first: it is always on top and would float over the
+        # dialog.
+        if splash is not None:
+            splash.dismiss()
         _fatal("Missing Required Files",
                f"The application could not find a required file:\n\n{e}\n\n"
                "Check that the 'config' folder sits next to the executable and "
                "contains config.json.")
     except Exception as e:
+        if splash is not None:
+            splash.dismiss()
         from src.data_access.db_manager import DriverNotInstalledError
 
         if isinstance(e, DriverNotInstalledError):

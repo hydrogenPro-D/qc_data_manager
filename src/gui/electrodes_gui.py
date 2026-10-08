@@ -10,7 +10,7 @@ import datetime as dt
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QToolButton, QDialog,
-    QPushButton, QScrollArea,
+    QPushButton, QScrollArea, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QEvent, QObject, QSize, QTimer
 from PyQt6.QtGui import QFont
@@ -152,6 +152,13 @@ DONUT_DIAMETER = 212
 # for the ring and its legend, plus the scrollbar it gets on a short window, so
 # the ring never loses room to it.
 CHART_PANEL_WIDTH = 330 + SCROLLBAR_VERTICAL_WIDTH
+# Left, top, right, bottom. Shared by the part that scrolls and the part
+# pinned under it, so the two columns of content line up.
+PANEL_MARGINS = (14, 0, 5, 0)
+# About four rows and the header. Beyond that the pull list scrolls in
+# itself rather than pushing the breakdown off the top: it is pinned now,
+# so whatever height it claims is height the rest of the panel never sees.
+TEST_FIRST_MAX_HEIGHT = 240
 
 
 def status_pill_style(value: str) -> PillStyle | None:
@@ -366,11 +373,11 @@ class ElectrodesWidget(QWidget):
         self.filter_bar.set_options(
             FILTER_STATUS, [status_label(s) for s in ElectrodeStatus])
         self.filter_bar.changed.connect(self._render)
-        # On the filters' second row rather than a line of its own, but held
-        # clear of the panel beside the table so it still sits above the
-        # table's right edge instead of the window's.
-        self.filter_bar.add_trailing(1, self._build_zoom_widget(),
-                                     right_inset=CHART_PANEL_WIDTH)
+        # On the filters' second row rather than a line of its own, and in with
+        # them rather than at the right edge: out there it belonged to nothing,
+        # and on a narrow window the Status finalised range wrapped away and
+        # left it stranded on a row of its own.
+        self.filter_bar.add_before_extra_range(self._build_zoom_widget())
 
         # The strip scrolls sideways rather than forcing its own width on the
         # window. Its height then has to cover BOTH rows plus the scrollbar
@@ -501,6 +508,13 @@ class ElectrodesWidget(QWidget):
             title="Status breakdown", unit_label="electrodes",
             diameter=DONUT_DIAMETER)
         self.status_chart.set_info(self._status_definitions())
+        # Preferred lets a layout shrink a widget to nothing, which is what the
+        # scroll area did: the donut was clipped to a sliver and the panel
+        # never scrolled, because its minimum came out as almost zero. Minimum
+        # means it may grow but not shrink, so the panel keeps its real height
+        # and the scroll area has something to scroll.
+        self.status_chart.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                        QSizePolicy.Policy.Minimum)
         self.report_button = QPushButton("Get report")
         self.report_button.setMinimumHeight(30)
         self.report_button.setStyleSheet(TOOLBAR_BUTTON_STYLE)
@@ -508,28 +522,31 @@ class ElectrodesWidget(QWidget):
         apply_modern_shadow(self.report_button)
         self.report_button.clicked.connect(self._on_report_clicked)
 
+        # ONLY THE BREAKDOWN SCROLLS. The pull list and the report button are
+        # what an operator came to this panel to use, and they were the two
+        # things that fell off the bottom on a short screen, with nothing on
+        # the page to say they were down there. The donut and its legend are a
+        # summary: scrolling to read the last line of one costs nothing.
         chart_panel = QWidget()
         chart_layout = QVBoxLayout()
         # A gap on the right so the percentages do not run into the scrollbar
         # when the panel is scrolling.
-        chart_layout.setContentsMargins(14, 0, 5, 0)
+        chart_layout.setContentsMargins(*PANEL_MARGINS)
         chart_layout.setSpacing(8)
         chart_layout.addWidget(self.status_chart, 0)
-        chart_layout.addWidget(self._build_scrap_panel(), 0)
-        chart_layout.addWidget(self._build_test_first_panel(), 1)
-        chart_layout.addWidget(self.report_button, 0)
+        chart_layout.addStretch(1)
         chart_panel.setLayout(chart_layout)
+        self._chart_panel = chart_panel
 
-        # The donut, the legend, the test-first list and the button stack up to
-        # about 670px, and as a plain child that became the window's minimum
-        # height: on a 200% display it simply would not fit and the chart was
-        # squashed. In a scroll area the panel keeps its natural size and the
-        # window is free to be any height, scrolling here when it has to.
+        # The donut and the legend stack up to about 500px, and as a plain
+        # child that became the window's minimum height: on a 200% display it
+        # simply would not fit and the chart was squashed. In a scroll area the
+        # panel keeps its natural size and the window is free to be any height,
+        # scrolling here when it has to.
         chart_scroll = QScrollArea()
         chart_scroll.setWidget(chart_panel)
         chart_scroll.setWidgetResizable(True)
         chart_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        chart_scroll.setFixedWidth(CHART_PANEL_WIDTH)
         # Without this the scroll area reports the panel's height upward and
         # nothing is gained, which is the same trap the filter bar has.
         chart_scroll.setMinimumHeight(0)
@@ -541,15 +558,52 @@ class ElectrodesWidget(QWidget):
             "QScrollArea { background: transparent; border: none; }"
             + SCROLLBAR_STYLE)
 
+        pinned = QWidget()
+        pinned_layout = QVBoxLayout()
+        pinned_layout.setContentsMargins(*PANEL_MARGINS)
+        pinned_layout.setSpacing(8)
+        # Scrapped is pinned too. It was asked for as a number that is on
+        # screen whatever the filters say, and in the scrolling half it was
+        # only on screen when the window happened to be tall enough.
+        pinned_layout.addWidget(self._build_scrap_panel(), 0)
+        pinned_layout.addWidget(self._build_test_first_panel(), 0)
+        pinned_layout.addWidget(self.report_button, 0)
+        pinned.setLayout(pinned_layout)
+        # May grow, may not shrink. Without this the layout squeezed the pinned
+        # half when the panel ran short and clipped the pull list's one row,
+        # which is the row it exists to show. The scroll area above it has a
+        # minimum of nothing, so it is the one that gives way.
+        pinned.setSizePolicy(QSizePolicy.Policy.Preferred,
+                             QSizePolicy.Policy.Minimum)
+
+        side_panel = QWidget()
+        side_panel.setFixedWidth(CHART_PANEL_WIDTH)
+        side_layout = QVBoxLayout()
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(8)
+        side_layout.addWidget(chart_scroll, 1)
+        side_layout.addWidget(pinned, 0)
+        side_panel.setLayout(side_layout)
+
+        # THE FILTERS SIT OVER THE TABLE, not over the panel beside it. They
+        # used to span the whole window, so the panel began three rows down and
+        # that is the height the donut and the pull list were short of. The
+        # search box and the count move with them, which is no loss: they
+        # describe the table, which is what they now sit above.
+        left_column = QVBoxLayout()
+        left_column.setContentsMargins(0, 0, 0, 0)
+        left_column.setSpacing(0)
+        left_column.addWidget(filter_scroll, 0)
+        left_column.addSpacing(4)
+        left_column.addWidget(self.table, 1)
+
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        body.addWidget(self.table, 1)
-        body.addWidget(chart_scroll, 0)
+        body.addLayout(left_column, 1)
+        body.addWidget(side_panel, 0)
 
         content_layout.addLayout(toolbar, 0)
-        content_layout.addSpacing(4)
-        content_layout.addWidget(filter_scroll, 0)
         content_layout.addSpacing(4)
         content_layout.addLayout(body, 1)
         content_container.setLayout(content_layout)
@@ -845,6 +899,26 @@ class ElectrodesWidget(QWidget):
     # ------------------------------------------------------------------
     # Row styling
     # ------------------------------------------------------------------
+    def _fit_chart_panel(self) -> QWidget:
+        """Give the scrolling panel the height its contents actually need.
+
+        The legend grows and shrinks with how many statuses are on screen, and
+        the scroll area is not resizing the panel for us, so the one thing it
+        needs telling is this. Without it the panel keeps whatever height it
+        had when the window was last resized, which at startup is the height of
+        an empty chart, and everything below the fold stays unreachable.
+        """
+        panel = getattr(self, "_chart_panel", None)
+        if panel is None:
+            return
+        # A MINIMUM, not a resize. The scroll area sizes the panel itself and
+        # would undo a resize on its next pass, but it never shrinks the panel
+        # below an explicit minimum, and setting one makes it rescroll there
+        # and then.
+        wanted = panel.sizeHint().height()
+        if wanted and wanted != panel.minimumHeight():
+            panel.setMinimumHeight(wanted)
+
     def _build_test_first_panel(self) -> QWidget:
         """The pull-list: which electrodes to take to SEM/IC first."""
         self.test_first_heading = QLabel("Electrodes to be tested first")
@@ -870,6 +944,8 @@ class ElectrodesWidget(QWidget):
         self.test_first_table.verticalHeader().setVisible(False)
         self.test_first_table.set_columns_fill(True)
         self.test_first_table.setMinimumWidth(120)
+        self.test_first_table.setMaximumHeight(TEST_FIRST_MAX_HEIGHT)
+        self.test_first_table.setMinimumHeight(0)
 
         panel = QWidget()
         layout = QVBoxLayout()
@@ -884,6 +960,9 @@ class ElectrodesWidget(QWidget):
         """Fill the pull-list from whatever the filters currently show."""
         if self.test_first_table is None:
             return
+        # Scheduled rather than called at the end: it has to run after the rows
+        # exist and have been laid out, and this covers every way out of here.
+        QTimer.singleShot(0, self._fit_test_first_table)
         visible = self.df_visible
         if visible is None or visible.empty or PRIORITY_COLUMN not in visible.columns:
             self.test_first_table.load_data(pd.DataFrame())
@@ -902,6 +981,23 @@ class ElectrodesWidget(QWidget):
             "Date": flagged[str(ElectrodeColumns.DATE)].map(
                 format_utc_timestamp_for_display).values,
         }))
+
+    def _fit_test_first_table(self) -> None:
+        """Give the pull list the height its rows need, and no more.
+
+        It is pinned under the breakdown now, so every pixel it reserves is a
+        pixel the donut and its legend do not get. One flagged electrode asked
+        for six rows of empty table and the legend was cut off to pay for it.
+        """
+        table = self.test_first_table
+        if table is None:
+            return
+        # A nominal row height when the rows have not been measured yet, or an
+        # empty list collapses to a header with nowhere to put the first row.
+        row_height = table.rowHeight(0) or table.BASE_ROW_HEIGHT
+        header = table.horizontalHeader().height()
+        wanted = header + max(1, table.rowCount()) * row_height + 4
+        table.setFixedHeight(min(TEST_FIRST_MAX_HEIGHT, wanted))
 
     def statuses_in_scope(self) -> list[str]:
         """The stored statuses the report and the chart should cover.
@@ -1037,6 +1133,11 @@ class ElectrodesWidget(QWidget):
     def _update_status_chart(self) -> None:
         """Feed the donut the status split of the rows currently shown."""
         self.status_chart.update_data(*self._status_split())
+        # Next turn of the event loop, not now: the legend is rebuilt as part
+        # of this call and the panel does not know its new height until it has
+        # settled. Measured here it reports the height of the chart it is
+        # replacing, which at startup is an empty one.
+        QTimer.singleShot(0, self._fit_chart_panel)
         self._update_scrap_rate()
 
     def _status_at(self, row_index: int) -> str | None:

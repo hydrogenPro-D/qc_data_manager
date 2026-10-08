@@ -724,6 +724,13 @@ class FilterBarWidget(QWidget):
         # A second date range over a different column, named by its caption.
         self._extra_date_caption = extra_date_range
         self.extra_date_range: DateRangeWidget | None = None
+        # Where it belongs while there is room, and whether it has been pushed
+        # off that row. See _reflow.
+        self._extra_home: tuple[QHBoxLayout, int] | None = None
+        # The widgets that drop to a line of their own together, in row order.
+        self._wrapping: list = []
+        self._overflow_row: QWidget | None = None
+        self._wrapped = False
         # One row per group rather than one long strip. Past four dropdowns and
         # a range a single row is wider than the window, and a filter strip that
         # scrolls sideways can hide a filter that is switched on.
@@ -782,7 +789,19 @@ class FilterBarWidget(QWidget):
         if self._extra_date_caption:
             self.extra_date_range = DateRangeWidget(self._extra_date_caption)
             self.extra_date_range.changed.connect(self._relay)
+            self._extra_home = (second, second.count())
             second.addWidget(self.extra_date_range, 0)
+            self._wrapping = [self.extra_date_range]
+
+            # Somewhere to put it when the row is too narrow to hold it. Hidden
+            # until then, so it costs no height on a wide screen.
+            self._overflow_row = QWidget()
+            overflow = QHBoxLayout(self._overflow_row)
+            overflow.setContentsMargins(0, 0, 0, 0)
+            overflow.setSpacing(10)
+            outer.addWidget(self._overflow_row)
+            self._overflow_row.hide()
+            rows.append(overflow)
 
         for line in rows:
             line.addStretch(1)
@@ -813,6 +832,84 @@ class FilterBarWidget(QWidget):
         # add_trailing.
         self._rows = rows
         self.setLayout(outer)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        """Drop the extra date range onto its own line when the row is full.
+
+        Qt squeezes the fields rather than letting the row overflow, and an
+        electrode number typed into a 56 pixel box cannot be read back. Nothing
+        here is allowed to shrink, so the row that cannot fit gets a second
+        line instead. On a wide screen the line is hidden and costs nothing.
+        """
+        if not self._wrapping or self._extra_home is None:
+            return
+        home, index = self._extra_home
+        # Measured WITHOUT the travelling group, then with it added back, so
+        # the answer does not depend on which row the group is sitting in.
+        # Otherwise moving it changes the measurement that moved it, and it
+        # flaps between the two.
+        needed = self._natural_width(home) + sum(
+            widget.sizeHint().width() + home.spacing()
+            for widget in self._wrapping)
+        margin = self.contentsMargins()
+        available = self.width() - margin.left() - margin.right()
+        wrapped = needed > available
+        if wrapped == self._wrapped:
+            return
+        self._wrapped = wrapped
+
+        overflow = self._overflow_row.layout()
+        # THE WHOLE GROUP MOVES, in its own order. Anything put ahead of the
+        # extra range belongs with it: left behind, it ends up alone at the end
+        # of a row it has nothing to do with.
+        for position, widget in enumerate(self._wrapping):
+            if wrapped:
+                home.removeWidget(widget)
+                overflow.insertWidget(position, widget)
+            else:
+                overflow.removeWidget(widget)
+                home.insertWidget(index + position, widget)
+        self._overflow_row.setVisible(wrapped)
+
+    def _natural_width(self, row: QHBoxLayout) -> int:
+        """What a row would take if nothing in it were squeezed.
+
+        The widgets' own hints rather than the layout's, which already reflects
+        the squeezing this exists to prevent. The travelling group is left out
+        wherever it currently sits; the caller adds it back.
+        """
+        total = 0
+        counted = 0
+        for position in range(row.count()):
+            item = row.itemAt(position)
+            widget = item.widget()
+            if widget is not None and widget in self._wrapping:
+                continue
+            # A spacer counts for what it reserves, which is nothing for the
+            # stretch and the inset for a trailing control's dead space.
+            total += (widget.sizeHint().width() if widget is not None
+                      else item.sizeHint().width())
+            counted += 1
+        return total + row.spacing() * max(0, counted - 1)
+
+    def add_before_extra_range(self, widget) -> None:
+        """Put a widget just ahead of the extra date range, and keep it there.
+
+        It joins the group that wraps, so when the range drops to a line of its
+        own this goes with it and stays immediately in front. Parked at the
+        right edge instead, it read as belonging to nothing, and once the range
+        wrapped away it was left alone at the end of the row above.
+        """
+        if self._extra_home is None:
+            self._rows[1].addWidget(widget, 0)
+            return
+        row, index = self._extra_home
+        row.insertWidget(index, widget)
+        self._wrapping.insert(0, widget)
 
     def add_trailing(self, row: int, widget, right_inset: int = 0) -> None:
         """Put a widget at the right end of one row, held clear of the edge.
