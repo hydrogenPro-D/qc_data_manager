@@ -76,3 +76,138 @@ class TestOngoingSurvivesAnEmptyBoard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNotTestedNeverShowsAFinalisedDate(unittest.TestCase):
+    """Nothing about a Not Tested electrode has settled, so no date stands.
+
+    The database can hold one: a stretch released and marked as done keeps its
+    archived timestamp even once the status itself has given way, and a sweep
+    cancelled by a test under way leaves exactly that. A date beside Not Tested
+    reads as a decision nobody made, so the column is blanked here, in the one
+    place the table, the filter and the report all read from.
+    """
+
+    MARKINGS = ["B14460", "B14461"]
+
+    def _finalised(self, decided, ongoing=None) -> dict:
+        from src.data_access.electrodes.electrode_columns import FINALISED_COLUMN
+
+        processor = ElectrodeProcessor(
+            status_by_marking={},
+            overrides_provider=lambda: decided,
+            ongoing_provider=lambda: ongoing or set(),
+            finalised_provider=lambda: {m: "2026-09-30 07:00:00"
+                                        for m in self.MARKINGS})
+        out = processor.process(frame(self.MARKINGS))
+        return dict(zip(out[str(ElectrodeColumns.MARKING)],
+                        out[FINALISED_COLUMN]))
+
+    def test_blank_where_the_status_is_not_tested(self) -> None:
+        self.assertEqual(self._finalised({}),
+                         {marking: "" for marking in self.MARKINGS})
+
+    def test_kept_where_the_electrode_actually_has_a_verdict(self) -> None:
+        decided = {"B14460": str(ElectrodeStatus.TESTED_AND_RELEASED)}
+        self.assertTrue(self._finalised(decided)["B14460"])
+
+    def test_blank_again_once_that_verdict_is_taken_away(self) -> None:
+        self.assertEqual(self._finalised({})["B14460"], "")
+
+
+class TestALiveCardLeavesNoDate(unittest.TestCase):
+    """A card still on the board holds its neighbours, so nothing has settled.
+
+    B14837 dropped into Failed rejects the electrodes around it at once, which
+    is the point of the live re-test. Those rows had been released and
+    finalised days earlier, and kept that date while reading Rejected: a status
+    dated to a day on which it was something else.
+    """
+
+    MARKINGS = [f"B{14834 + i}" for i in range(6)]
+    FAILED_AT = "B14837"
+    WHEN = "2026-09-28 13:54:00"
+
+    def _finalised(self, on_board, pinned=None, by_hand=None) -> dict:
+        from src.data_access.electrodes.electrode_columns import FINALISED_COLUMN
+
+        processor = ElectrodeProcessor(
+            status_by_marking=by_hand or {},
+            overrides_provider=lambda: {
+                self.FAILED_AT: str(ElectrodeStatus.TESTED_AND_SCRAPPED)},
+            board_provider=lambda: set(on_board),
+            pinned_provider=lambda: set(pinned or ()),
+            finalised_provider=lambda: {m: self.WHEN for m in self.MARKINGS})
+        out = processor.process(frame(self.MARKINGS))
+        return dict(zip(out[str(ElectrodeColumns.MARKING)],
+                        out[FINALISED_COLUMN]))
+
+    def test_the_swept_neighbours_show_no_date(self) -> None:
+        dates = self._finalised(on_board=[self.FAILED_AT])
+        self.assertEqual(dates["B14836"], "")
+        self.assertEqual(dates["B14838"], "")
+
+    def test_the_date_comes_back_once_the_card_is_finalised(self) -> None:
+        """Off the board is what marking it as done does."""
+        dates = self._finalised(on_board=[])
+        self.assertEqual(dates["B14836"], self.WHEN)
+
+    def test_a_hand_set_status_keeps_its_own_date(self) -> None:
+        """Nothing holds it, so no card can take its date away."""
+        dates = self._finalised(
+            on_board=[self.FAILED_AT], pinned=["B14836"],
+            by_hand={"B14836": str(ElectrodeStatus.RELEASED)})
+        self.assertEqual(dates["B14836"], self.WHEN)
+
+
+class TestOnlyAnOutcomeCarriesADate(unittest.TestCase):
+    """The four an electrode can finish on, and nothing else.
+
+    Needs testing and the two waits are steps on the way to an outcome, so the
+    electrode has not finished and there is nothing to date. The filter reads
+    the same column, so they drop out of a Status finalised range too.
+    """
+
+    WHEN = "2026-10-08 11:01:00"
+
+    def _finalised(self, by_hand) -> dict:
+        from src.data_access.electrodes.electrode_columns import FINALISED_COLUMN
+
+        markings = list(by_hand)
+        processor = ElectrodeProcessor(
+            status_by_marking=by_hand,
+            pinned_provider=lambda: set(markings),
+            finalised_provider=lambda: {m: self.WHEN for m in markings})
+        out = processor.process(frame(markings))
+        return dict(zip(out[str(ElectrodeColumns.MARKING)],
+                        out[FINALISED_COLUMN]))
+
+    def test_the_four_outcomes_carry_one(self) -> None:
+        from src.data_access.electrodes.electrode_columns import DECIDED
+
+        by_hand = {f"B{14900 + i}": str(status)
+                   for i, status in enumerate(sorted(DECIDED, key=str))}
+        dates = self._finalised(by_hand)
+        for marking, status in by_hand.items():
+            self.assertEqual(dates[marking], self.WHEN, status)
+
+    def test_nothing_on_the_way_to_one_does(self) -> None:
+        on_the_way = (ElectrodeStatus.NOT_TESTED, ElectrodeStatus.NEEDS_TESTING,
+                      ElectrodeStatus.WAITING_FOR_SEM,
+                      ElectrodeStatus.WAITING_FOR_IC,
+                      ElectrodeStatus.TEST_ONGOING)
+        by_hand = {f"B{14900 + i}": str(status)
+                   for i, status in enumerate(on_the_way)}
+        dates = self._finalised(by_hand)
+        for marking, status in by_hand.items():
+            self.assertEqual(dates[marking], "", status)
+
+    def test_every_status_is_on_one_side_or_the_other(self) -> None:
+        """So a status added later cannot quietly fall through the gap."""
+        from src.data_access.electrodes.electrode_columns import DECIDED
+
+        by_hand = {f"B{14900 + i}": str(status)
+                   for i, status in enumerate(ElectrodeStatus)}
+        dates = self._finalised(by_hand)
+        dated = {status for marking, status in by_hand.items() if dates[marking]}
+        self.assertEqual(dated, {str(status) for status in DECIDED})

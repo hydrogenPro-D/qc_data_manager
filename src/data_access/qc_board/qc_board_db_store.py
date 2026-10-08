@@ -24,7 +24,8 @@ import json
 import time
 
 from src.data_access.electrodes.electrode_columns import normalize_status
-from src.data_access.electrodes.status_propagation import electrode_number
+from src.data_access.electrodes.status_propagation import (claimable,
+                                                            electrode_number)
 from src.data_access.qc_board.qc_board_columns import (
     ElectrodeType,
     QcStage,
@@ -48,6 +49,41 @@ def _finding(value, field: str) -> str:
     """
     text = str(value or "").strip()
     return text if text in FINDING_VALUES.get(field, ()) else PENDING
+
+
+def _nearest(marking: str, cards) -> str:
+    """Whichever of these cards is closest to this electrode, by number.
+
+    Several can hold the same row. The operator needs the one whose result will
+    actually reach it, and that is the near one: naming whichever happened to
+    come first out of a set sent them to an electrode far up the table while
+    the one next door was the test they were waiting on. Sorted first, so a tie
+    is settled the same way every render.
+    """
+    ordered = sorted(cards)
+    if not ordered:
+        return ""
+    here = electrode_number(marking)
+    if here is None:
+        return ordered[0]
+    return min(ordered, key=lambda card: abs((electrode_number(card) or 0) - here))
+
+
+def _card_inside(marking: str, source: str, cards: dict[int, str]) -> str:
+    """The nearest card standing between these two electrodes, or "".
+
+    Inclusive at the inference, exclusive at the source. An electrode on the
+    board is inside the stretch its own frozen status covers, but the verdict
+    that stretch was drawn from is not part of it: re-testing that verdict is a
+    separate matter, and its old result goes on driving the stretch until a new
+    result replaces it.
+    """
+    here, there = electrode_number(marking), electrode_number(source)
+    if here is None or there is None:
+        return ""
+    low, high = min(here, there), max(here, there)
+    return _nearest(marking, [card for number, card in cards.items()
+                              if low <= number <= high and number != there])
 
 
 class QcBoardDbStore:
@@ -216,56 +252,113 @@ class QcBoardDbStore:
                 for marking, entry in self._archived.items()
                 if entry.get("status") and (entry.get("from") or "") in ("", marking)}
 
-    def stale_inferences(self) -> set[str]:
-        """Finalised sweeps drawn from a verdict that has since been replaced.
+    def stale_inferences(self, board: set[str] | None = None) -> set[str]:
+        """Finalised sweeps that no longer stand.
 
-        A finalised status records what it was drawn from and when. Re-testing
-        that electrode writes a new verdict but does not touch the neighbours
-        the old one condemned, so they keep a status inferred from a verdict
-        that no longer exists, and the new one finds nothing left to claim: the
-        sweeps only ever take an electrode that has no status of its own.
-
-        Recognised by time rather than by value. An inference older than the
-        verdict it names was drawn from a previous version of it; one carrying
-        the same timestamp was written by the sweep that verdict just ran.
+        ``board`` is which cards to count as holding a stretch, defaulting to
+        everything on it. ``finalise`` passes the cards that will REMAIN, so a
+        stretch another operator still has open is not frozen by somebody
+        else's "mark all as done".
         """
+        return set(self._unfrozen(board))
+
+    def reopened_sources(self, board: set[str] | None = None) -> set[str]:
+        """The verdicts whose frozen sweeps no longer stand.
+
+        A finalise has to let exactly these sweep again. The far half of a
+        reopened stretch is held by one of them rather than by the card being
+        finalised, so without them half the stretch takes the new date and half
+        keeps the date of the sweep the card interrupted. Only these, because
+        letting every verdict ever recorded sweep would rewrite rows that have
+        nothing to do with the card in hand.
+        """
+        return {str(self._archived[marking].get("from") or "")
+                for marking in self._unfrozen(board)} - {""}
+
+    def revisited_by(self) -> dict[str, str]:
+        """``{electrode: the card on the board it is now moving with}``.
+
+        A frozen sweep dropped because of a card changes what these electrodes
+        read, whether or not the new sweep then claims them: one on the far
+        side may end up settled by a different pass entirely. They are moving
+        with that card, so they lock with it and show no settled date until it
+        is marked as done.
+        """
+        return {marking: why for marking, why in self._unfrozen().items() if why}
+
+    def _unfrozen(self, board: set[str] | None = None) -> dict[str, str]:
+        """``{frozen inference that no longer stands: what unfroze it}``.
+
+        The value is the card on the board responsible, or empty where the
+        inference simply gave way to a newer verdict and no card is involved.
+
+        Three ways an inference stops standing:
+
+        * **Its verdict is being re-tested.** A card sitting in Passed or
+          Failed is the current answer, so a sweep frozen from that electrode's
+          previous answer gives way at once rather than condemning its
+          neighbours on a result that no longer stands.
+        * **A card is inside the stretch it belongs to.** Whatever that test
+          says governs the stretch: a scrap there condemns the electrodes
+          either side, which is the opposite of the release that froze them. So
+          the whole stretch reads Not Tested until the card is marked as done.
+          Recognised two ways, an electrode standing between an inference and
+          the verdict it was drawn from, or one swept by that same verdict,
+          which is the rest of its own stretch.
+        * **Its verdict was replaced by a newer one.** By time rather than by
+          value: an inference older than the verdict it names was drawn from a
+          previous version of it, while one carrying the same timestamp was
+          written by the sweep that verdict just ran.
+        """
+        board = self.on_board() if board is None else set(board)
         verdict_at = {marking: str(entry.get("at") or "")
                       for marking, entry in self._archived.items()
                       if (entry.get("from") or "") in ("", marking)}
+        # Only the decided ones replace a verdict. An electrode back on the
+        # board carrying a verdict of its OWN goes on driving its neighbours
+        # until a new result lands, which is settled behaviour elsewhere.
+        replaced = {marking for marking in self.status_overrides()
+                    if marking in board}
 
-        # A verdict being revisited on the board counts as replaced too, not
-        # only an archived one. The card sitting in Passed or Failed is the
-        # current answer, so the sweep frozen from its previous answer has to
-        # give way to it at once, rather than leaving the electrodes around it
-        # condemned by a result that no longer stands until somebody finalises.
-        live = set(self.status_overrides())
+        held_at = {}
+        for marking in board:
+            number = electrode_number(marking)
+            if number is not None:
+                held_at[number] = marking
+        # Which cards were swept by which verdict, so the rest of that verdict's
+        # stretch gives way with them. All of them, not the first one found: a
+        # row is held by the nearest, worked out per row below.
+        shadowed: dict[str, list[str]] = {}
+        for marking in board:
+            source = str(self._archived.get(marking, {}).get("from") or "")
+            if source and source != marking:
+                shadowed.setdefault(source, []).append(marking)
 
-        stale = set()
+        unfrozen: dict[str, str] = {}
         for marking, entry in self._archived.items():
             source = str(entry.get("from") or "")
             if not source or source == marking:
                 continue
-            if source in live:
-                stale.add(marking)
+            if source in replaced:
+                unfrozen[marking] = source
+                continue
+            # Everything below is a card standing in the stretch, and a card
+            # cannot move a scrapped electrode: no sweep claims one. Those rows
+            # are settled by the verdict that condemned them and stay settled,
+            # with the date that verdict was finalised on.
+            if not claimable(normalize_status(str(entry.get("status") or ""))):
+                continue
+            if source in shadowed:
+                unfrozen[marking] = _nearest(marking, shadowed[source])
+                continue
+            inside = _card_inside(marking, source, held_at)
+            if inside:
+                unfrozen[marking] = inside
                 continue
             current = verdict_at.get(source, "")
             if current and current > str(entry.get("at") or ""):
-                stale.add(marking)
-        return stale
-
-    def revisited_by(self) -> dict[str, str]:
-        """``{electrode: the live verdict that unfroze it}``.
-
-        Dropping a frozen sweep because its verdict is being re-tested changes
-        what these electrodes read, whether or not the new sweep then claims
-        them: one on the far side may end up settled by a different pass
-        entirely. They are still moving with that card, so they lock with it.
-        """
-        live = set(self.status_overrides())
-        return {marking: str(entry.get("from") or "")
-                for marking, entry in self._archived.items()
-                if (entry.get("from") or "") in live
-                and (entry.get("from") or "") != marking}
+                unfrozen[marking] = ""
+        return unfrozen
 
     def archived_statuses(self) -> dict[str, str]:
         """``{marking: status}`` for everything already finalised."""
@@ -277,6 +370,71 @@ class QcBoardDbStore:
         hand set status covering the same electrode."""
         return {marking: str(entry.get("at") or "")
                 for marking, entry in self._archived.items() if entry.get("status")}
+
+    def settled_times(self) -> dict[str, str]:
+        """``{marking: when its status last settled}``, restamped where it moved.
+
+        ``archived_times`` says when a row was written. That is not always when
+        the status it carries settled, and the difference is visible on screen.
+
+        A stretch released between two passes is frozen in one go. Put one of
+        its electrodes on the board and the whole stretch unfreezes and reads
+        Not Tested; release that electrode and finalise it, and the stretch is
+        released again, by the newer evidence this time. The rows were never
+        rewritten, so they still carried the date of the sweep the test
+        interrupted, and an operator reading the column saw a stretch that had
+        been Not Tested an hour ago dated to the day before.
+
+        So a verdict frozen INSIDE a stretch, later than the stretch itself,
+        restamps the whole of it. An electrode only earns a verdict by going on
+        the board, and going on the board is what unfroze the stretch, so a
+        later verdict in the middle of one is exactly the evidence that it went
+        away and came back.
+
+        The whole stretch, not the electrodes on one side: it was unfrozen as
+        one and came back as one. Each row on its own only reaches as far as the
+        verdict it names, which would have restamped the half below a test and
+        left the half above it dated a day earlier.
+        """
+        times = self.archived_times()
+        verdicts = {}
+        for marking, entry in self._archived.items():
+            source = str(entry.get("from") or "")
+            if entry.get("status") and source in ("", marking):
+                number = electrode_number(marking)
+                if number is not None:
+                    verdicts[number] = str(entry.get("at") or "")
+
+        for members, (low, high) in self._stretches().items():
+            latest = max((at for number, at in verdicts.items()
+                          if low <= number <= high), default="")
+            for marking in members:
+                if latest > times.get(marking, ""):
+                    times[marking] = latest
+        return times
+
+    def _stretches(self) -> dict[tuple[str, ...], tuple[int, int]]:
+        """``{the inferences of one sweep: the electrodes they span}``.
+
+        Grouped by the verdict they were drawn from and when they were frozen,
+        which is one "mark all as done" over one sweep. The span takes in that
+        verdict, since the stretch runs up to it.
+        """
+        groups: dict[tuple[str, str], list[str]] = {}
+        for marking, entry in self._archived.items():
+            source = str(entry.get("from") or "")
+            if not source or source == marking or not entry.get("status"):
+                continue
+            groups.setdefault((source, str(entry.get("at") or "")), []).append(marking)
+
+        spans: dict[tuple[str, ...], tuple[int, int]] = {}
+        for (source, _at), members in groups.items():
+            numbers = [number for number in
+                       map(electrode_number, [*members, source])
+                       if number is not None]
+            if numbers:
+                spans[tuple(members)] = (min(numbers), max(numbers))
+        return spans
 
     def archived_priorities(self) -> set[str]:
         """Finalised test-first flags, so the instruction outlives the board entry."""

@@ -121,6 +121,17 @@ class ElectrodeStatus(Enum):
         return self.value
 
 
+# The four an electrode can finish on: an outcome, reached either on a rig or
+# inferred from a neighbour. Everything else is a step on the way to one of
+# these, so none of the others can carry a Status finalised date.
+DECIDED = frozenset({
+    ElectrodeStatus.TESTED_AND_RELEASED,
+    ElectrodeStatus.RELEASED,
+    ElectrodeStatus.TESTED_AND_SCRAPPED,
+    ElectrodeStatus.SCRAPPED,
+})
+
+
 # Worked out on every render and never written: the database's
 # electrode_status_kind does not hold them, and none may be set by hand.
 NEVER_STORED = frozenset({

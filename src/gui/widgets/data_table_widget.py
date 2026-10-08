@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QPointF, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from PyQt6.QtGui import QColor, QBrush, QFont, QWheelEvent
+from PyQt6.QtGui import (QBrush, QColor, QFont, QPainter, QPolygonF,
+                         QWheelEvent)
 
 
 @dataclass
@@ -30,7 +31,73 @@ class CellStyle:
     strikethrough: bool = False
 
 
+class SortHeader(QHeaderView):
+    """A header that draws its own sort arrow.
+
+    Qt's indicator is a few grey pixels that vanish against a coloured header,
+    and an operator could not tell a sorted column from an unsorted one. This
+    one is a solid white triangle, the same colour as the header text, sized to
+    be read at a glance rather than looked for.
+    """
+
+    ARROW_WIDTH = 14
+    ARROW_HEIGHT = 8
+    ARROW_MARGIN = 7
+
+    @classmethod
+    def arrow_room(cls) -> int:
+        """How much wider a column has to be to carry the arrow.
+
+        TWICE what the arrow occupies, because the heading is centred: widen a
+        column by X and only X/2 of it lands on the right, so half the arrow
+        still sat on the last letters. At twice, the gap on the right is at
+        least the arrow's own width however long the heading is.
+        """
+        return (cls.ARROW_WIDTH + cls.ARROW_MARGIN * 2) * 2
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        # Qt's own is off: two arrows on one header is worse than none.
+        self.setSortIndicatorShown(False)
+        self._marked = -1
+        self._ascending = True
+
+    def mark(self, column: int, ascending: bool) -> None:
+        """Point the arrow at one column, or nowhere with a column of -1."""
+        self._marked, self._ascending = column, ascending
+        self.viewport().update()
+
+    def paintSection(self, painter, rect, index) -> None:
+        super().paintSection(painter, rect, index)
+        if index != self._marked:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        width, height = self.ARROW_WIDTH, self.ARROW_HEIGHT
+        left = rect.right() - self.ARROW_MARGIN - width
+        top = rect.center().y() - height / 2
+        if self._ascending:
+            corners = [(left, top + height), (left + width, top + height),
+                       (left + width / 2, top)]
+        else:
+            corners = [(left, top), (left + width, top),
+                       (left + width / 2, top + height)]
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in corners]))
+        painter.restore()
+
+
 class DataTableWidget(QTableWidget):
+
+    # Asks the owning tab to re-sort its frame: ``(header text, ascending)``.
+    #
+    # A SIGNAL RATHER THAN QTableWidget's OWN SORTING, which moves the items
+    # and leaves the cell widgets where they were. The SEM tab puts a real
+    # button in its images column, so its own sorting would have scattered
+    # those buttons across the wrong samples. The tab owns the frame; it
+    # re-sorts that and renders again, and every row is rebuilt in step.
+    sort_requested = pyqtSignal(str, bool)
 
     # How far the zoom goes, and the row heights it scales. Bounded because a
     # table zoomed past either end stops being a table: too small to read, or
@@ -71,6 +138,16 @@ class DataTableWidget(QTableWidget):
                 what oldest-first tables want.
         """
         super().__init__(parent)
+        # Installed for every table, drawing nothing until one is marked. Set
+        # here rather than in enable_sorting, so nothing that took a reference
+        # to the header afterwards is left holding the one it replaced.
+        self.setHorizontalHeader(SortHeader(self))
+        # Which column a header click last asked for, and which way.
+        self._sorted_by = ""
+        self._sorted_ascending = True
+        # Which column has already been widened to hold the arrow. Reset by
+        # every load, which recomputes the widths from the content again.
+        self._arrow_room_column = -1
         self.setColumnCount(0)
         self.setRowCount(0)
         self.setMinimumHeight(min_table_height)
@@ -163,6 +240,9 @@ class DataTableWidget(QTableWidget):
 
         self.setColumnCount(len(display_df.columns))
         self.setHorizontalHeaderLabels(display_df.columns.astype(str))
+        # The widths below are worked out from the content, so whatever room
+        # the arrow was given last time has gone with them.
+        self._arrow_room_column = -1
         self.setRowCount(len(display_df))
 
         for row_idx, (_, row) in enumerate(display_df.iterrows()):
@@ -257,6 +337,68 @@ class DataTableWidget(QTableWidget):
             self.setItem(row_idx, col_idx, item)
 
         self._update_row_height(row_idx)
+
+    def enable_sorting(self) -> None:
+        """Let a header click ask for a sort. Off unless a tab asks for it.
+
+        The tab decides what the order means, so all this does is turn clicks
+        into ``sort_requested`` and show which way the arrow points.
+        """
+        header = self.horizontalHeader()
+        header.setSectionsClickable(True)
+        header.sectionClicked.connect(self._on_header_clicked)
+
+    def _on_header_clicked(self, column: int) -> None:
+        """Ascending, then descending, then off again.
+
+        Three states rather than two, because the order the tab loaded the rows
+        in means something of its own, production order on the SEM tab, and
+        without a third click there was no way back to it short of leaving the
+        tab and coming back.
+        """
+        name = self._column_name(column)
+        if not name:
+            return
+        if self._sorted_by != name:
+            wanted = (name, True)
+        elif self._sorted_ascending:
+            wanted = (name, False)
+        else:
+            wanted = ("", True)
+        self.show_sort_indicator(*wanted)
+        self.sort_requested.emit(*wanted)
+
+    def show_sort_indicator(self, name: str, ascending: bool) -> None:
+        """Point the arrow at this column. Re-applied after every load.
+
+        ``load_data`` rewrites the headers, and the arrow does not survive
+        that, so the tab puts it back rather than leaving a table that is
+        sorted but does not say so. An empty name takes the arrow off.
+        """
+        self._sorted_by, self._sorted_ascending = name, ascending
+        header = self.horizontalHeader()
+        if not name:
+            if isinstance(header, SortHeader):
+                header.mark(-1, ascending)
+            self._arrow_room_column = -1
+            return
+        for column in range(self.columnCount()):
+            if self._column_name(column) != name:
+                continue
+            header.setSortIndicator(
+                column, Qt.SortOrder.AscendingOrder if ascending
+                else Qt.SortOrder.DescendingOrder)
+            if isinstance(header, SortHeader):
+                header.mark(column, ascending)
+                # Room for the arrow, rather than letting it sit on the last
+                # letters of the heading. Once per load: the widths are worked
+                # out again by each one, and widening a column that had already
+                # been widened would walk it across the table.
+                if self._arrow_room_column != column:
+                    header.resizeSection(
+                        column, header.sectionSize(column) + header.arrow_room())
+                    self._arrow_room_column = column
+            return
 
     def _column_name(self, col_idx: int) -> str:
         """Header text for a column ('' if it has none)."""
