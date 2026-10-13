@@ -202,13 +202,6 @@ class DbManager:
         if self._plant_conn_str != self._conn_str:
             print(f"Reading the plant tables from {self._plant_database}, "
                   f"writing to {cfg['DB_DATABASE']}")
-        # The QC board lives here too, so its decisions can override the base
-        # status on every read. The GUI shares this one instance.
-        self._qc_board = QcBoardDbStore(self._session)
-        # When each by-hand correction was made, so a frozen board verdict on
-        # the same electrode can be ordered against it. Kept in step on write:
-        # nothing re-reads the statuses after startup.
-        self._manual_edits = load_manual_edit_times(self._session)
         # Which vat each electrode was plated in, joined in from the process
         # log. Deliberately NOT read here: the window has nothing to do with
         # this column while it opens, and the process log is a far bigger table
@@ -219,6 +212,15 @@ class DbManager:
         # column as loading rather than as absent. A database with no process
         # log answers instantly and the column is dropped, as before.
         self._vats_pending = True
+        # The QC board lives here too, so its decisions can override the base
+        # status on every read. The GUI shares this one instance.
+        # It takes the vats because a frozen sweep is only unfrozen by a card
+        # from the same run, and the store is where that is decided.
+        self._qc_board = QcBoardDbStore(self._session, vat_provider=lambda: self._vats)
+        # When each by-hand correction was made, so a frozen board verdict on
+        # the same electrode can be ordered against it. Kept in step on write:
+        # nothing re-reads the statuses after startup.
+        self._manual_edits = load_manual_edit_times(self._session)
         self._electrodes = ElectrodeProcessor(
             status_by_marking=load_status_from_db(self._session),
             overrides_provider=self._sweeping_decisions,

@@ -24,7 +24,8 @@ import json
 import time
 
 from src.data_access.electrodes.electrode_columns import normalize_status
-from src.data_access.electrodes.status_propagation import (claimable,
+from src.data_access.electrodes.status_propagation import (_single_vat,
+                                                            claimable,
                                                             electrode_number)
 from src.data_access.qc_board.qc_board_columns import (
     ElectrodeType,
@@ -89,8 +90,16 @@ def _card_inside(marking: str, source: str, cards: dict[int, str]) -> str:
 class QcBoardDbStore:
     """Reads and writes the board through views and procedures."""
 
-    def __init__(self, session) -> None:
+    # Tests subclass this and build their state without calling __init__, so the
+    # default lives on the class: no vats, and every card is a candidate.
+    _vat_provider = None
+
+    def __init__(self, session, vat_provider=None) -> None:
         self._session = session
+        # ``{marking: vat}``, so an unfreeze only considers cards from the run
+        # the frozen sweep actually travelled along. Absent, every card is a
+        # candidate, which is what this did before the vat was joined in.
+        self._vat_provider = vat_provider
         self._entries: dict[str, dict] = {}
         self._archived: dict[str, dict] = {}
         self._last_action: dict = {}
@@ -291,6 +300,30 @@ class QcBoardDbStore:
         """
         return {marking: why for marking, why in self._unfrozen().items() if why}
 
+    def _lane_of(self, marking: str) -> str:
+        """The vat whose run a sweep from this electrode travels along.
+
+        Empty when the process log gives it two vats or none, which is the same
+        reading ``_lanes`` makes before falling back to the whole sequence.
+        """
+        vats = self._vat_provider() if self._vat_provider else None
+        return _single_vat(marking, vats or {})
+
+    def _lane_cards(self, held_at: dict, source: str) -> dict:
+        """The cards that could have stood in a stretch swept from ``source``.
+
+        A verdict with no settled vat swept the whole production sequence, so
+        every card was in its reach; that is the fallback ``_lanes`` makes and
+        this matches it. A card with no settled vat is kept in every run for the
+        same reason, and because leaving it out would release a stretch it may
+        genuinely be standing in.
+        """
+        lane = self._lane_of(source)
+        if not lane:
+            return {number: marking for cards in held_at.values()
+                    for number, marking in cards.items()}
+        return {**held_at.get(lane, {}), **held_at.get("", {})}
+
     def _unfrozen(self, board: set[str] | None = None) -> dict[str, str]:
         """``{frozen inference that no longer stands: what unfroze it}``.
 
@@ -325,11 +358,16 @@ class QcBoardDbStore:
         replaced = {marking for marking in self.status_overrides()
                     if marking in board}
 
-        held_at = {}
+        # ALONG THE RUN, NOT THE NUMBER LINE. A sweep travels one vat's run, so
+        # the cards that could have stood in a stretch are the ones from that
+        # same run. The line plates 28, 29, 30, 28, so two thirds of the numbers
+        # a stretch spans belong to other vats, and before this a card in any of
+        # them unfroze a stretch it could never have been part of.
+        held_at: dict[str, dict[int, str]] = {}
         for marking in board:
             number = electrode_number(marking)
             if number is not None:
-                held_at[number] = marking
+                held_at.setdefault(self._lane_of(marking), {})[number] = marking
         # Which cards were swept by which verdict, so the rest of that verdict's
         # stretch gives way with them. All of them, not the first one found: a
         # row is held by the nearest, worked out per row below.
@@ -356,7 +394,7 @@ class QcBoardDbStore:
             if source in shadowed:
                 unfrozen[marking] = _nearest(marking, shadowed[source])
                 continue
-            inside = _card_inside(marking, source, held_at)
+            inside = _card_inside(marking, source, self._lane_cards(held_at, source))
             if inside:
                 unfrozen[marking] = inside
                 continue
