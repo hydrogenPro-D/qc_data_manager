@@ -52,6 +52,10 @@ from src.data_access.electrodes.electrode_status_db import (
 from src.data_access.electrodes.electrode_vat_db import load_vat_by_marking
 from src.data_access.electrodes.status_propagation import propagate_detailed
 from src.data_access.qc_board.qc_board_db_store import QcBoardDbStore
+from src.data_access.qc_requests import request_db_source
+from src.data_access.qc_requests.request_columns import KIND_FAULT
+from src.data_access.sampling.interval_db_source import (load_intervals,
+                                                         set_interval)
 from src.data_access.sem_edx import sem_edx_db_source as sem_db
 from src.data_access.sem_edx import sem_edx_library
 from src.data_access.sem_edx.sem_edx_columns import (
@@ -94,6 +98,9 @@ QC_SCHEMA = "qc_data"
 _ELECTRODE_STATUS_ENTITY = "electrode_status"
 _QC_BOARD_ENTITY = "qc_board"
 _SEM_EDX_ENTITY = "sem_edx"
+# The shared schema's requests. Watched by the Electrodes tab, because that is
+# where they are shown and the other application is what writes them.
+_QC_REQUEST_ENTITY = "qc_requests"
 
 # Production metadata: one row per produced electrode. Read straight from the
 # base table (no view exists for it yet); [Marking] carries the B-number.
@@ -226,7 +233,8 @@ class DbManager:
             pinned_provider=lambda: set(self._manual_edits),
             finalised_provider=self._finalised_times,
             findings_provider=self._qc_board.findings,
-            revisited_provider=self._qc_board.revisited_by)
+            revisited_provider=self._qc_board.revisited_by,
+            qc_request_provider=self.get_qc_requests)
         # Which quantities each sheet shows, from config.json. Read per
         # generation on first use, and one processor per generation and
         # electrode type, since none of the four measures quite the same thing.
@@ -333,6 +341,45 @@ class DbManager:
         """Kept as the name the rest of this class and its tests use; the rule
         itself lives in ``sql_session`` so the stores normalize identically."""
         return _normalize_frame(df)
+
+    # ---- QC requests (qc_requests) ------------------------------------
+    def get_qc_requests(self) -> dict[str, str]:
+        """``{electrode: request state}``. Read on every render.
+
+        The other application answers these, so a decision made there has to
+        reach the screen on the next poll rather than at the next restart.
+        """
+        return request_db_source.load_requests(self._session)
+
+    def raise_qc_request(self, electrode: str, kind: str) -> bool:
+        """Ask production for one electrode."""
+        return request_db_source.raise_request(self._session, electrode, kind)
+
+    def approve_qc_request(self, electrode: str, expected_state: str) -> bool:
+        """Accept one a technician offered."""
+        return request_db_source.approve(self._session, electrode, expected_state)
+
+    def decline_qc_request(self, electrode: str, expected_state: str) -> bool:
+        """Turn down one a technician offered."""
+        return request_db_source.decline(self._session, electrode, expected_state)
+
+    def raise_due_qc_requests(self) -> int:
+        """Run the sampling rule. Safe to call as often as anybody likes."""
+        return request_db_source.raise_due_requests(self._session)
+
+    # ---- sampling intervals (qc_requests) -----------------------------
+    def get_sampling_intervals(self) -> dict[str, int]:
+        """``{vat: electrodes between samples}``.
+
+        Read on every render rather than cached: the other application reads
+        the same table to decide what is due, so a figure changed on another
+        machine has to show up here without a restart.
+        """
+        return load_intervals(self._session)
+
+    def set_sampling_interval(self, vat: str, electrodes_between: int) -> bool:
+        """Record one vat's interval. False when it could not be written."""
+        return set_interval(self._session, vat, electrodes_between)
 
     # ---- production metadata (dbo.MetaData) ---------------------------
     def get_metadata(self) -> pd.DataFrame:
@@ -1082,7 +1129,48 @@ class DbManager:
         if not frozen:
             return 0
         consumed = {marking} if marking else None
-        return self._qc_board.archive(frozen, priorities, consumed)
+        count = self._qc_board.archive(frozen, priorities, consumed)
+        self._request_fault_tests(priorities)
+        return count
+
+    def _request_fault_tests(self, priorities: set[str]) -> int:
+        """Ask production for the electrodes a failure says to test next.
+
+        The test-first set IS the answer: the propagation already works out
+        which electrodes sit at the edge of a fault zone and would settle it,
+        which is the plus and minus three around a failure. Raising a request
+        for each of them is what turns that instruction into something
+        production can act on, rather than a flag somebody has to notice.
+
+        AFTER THE ARCHIVE, not before. The flags are frozen by that call, so a
+        request raised first could name an electrode the finalise then decides
+        differently about.
+
+        Three things are skipped. One already on the board is being tested, so
+        asking for it again is noise. One that already has a request keeps it,
+        which the procedure enforces rather than this: one row per electrode,
+        ever. And one with a verdict of its own was never in the test-first
+        set to begin with.
+
+        Failures here are printed and swallowed. The finalise has already
+        happened and is what the operator was waiting for; a request that
+        could not be raised is worth saying out loud but not worth undoing a
+        board full of decisions over.
+        """
+        if not priorities:
+            return 0
+        on_board = self._qc_board.on_board()
+        raised = 0
+        for marking in sorted(priorities):
+            if marking in on_board:
+                continue
+            try:
+                if request_db_source.raise_request(self._session, marking,
+                                                   KIND_FAULT):
+                    raised += 1
+            except Exception as e:
+                print(f"Could not request {marking} after the failure: {e}")
+        return raised
 
     def _decisions_for(self, marking: str | None) -> dict[str, str]:
         """Every board decision, or just the one named."""
@@ -1204,14 +1292,21 @@ class DbManager:
             dbo.MetaData        which electrodes exist at all
             electrode_status    what the ranges and the by-hand edits say
             qc_board            live decisions, which SWEEP onto neighbours
+            qc_requests         what the other application has asked for
 
         The third one is easy to forget and was: move a card to Scrapped on one
         machine and up to five electrodes change status on every other machine,
         without a row of dbo.MetaData or electrode_status moving. Watching only
         the first two left the tab stale until somebody visited the QC tab.
 
+        The fourth is the other application's half of the QC request workflow:
+        a technician offering an electrode, or answering something QC asked
+        for, changes a column on this tab without touching anything else here.
+
         The poller only compares watermarks for equality, so a tuple of the
-        three is as good as one number.
+        four is as good as one number. A database that has not had the
+        qc_requests migrations run returns no such entity and the tuple simply
+        carries None there, which compares fine.
         """
         sql = (f"SELECT MAX([{METADATA_KEY}]), COUNT(*) "
                f"FROM [{METADATA_SCHEMA}].[{METADATA_TABLE}] "
@@ -1227,7 +1322,8 @@ class DbManager:
         qc = self._qc_watermarks()
         return {_METADATA_ENTITY: (produced,
                                    qc.get(_ELECTRODE_STATUS_ENTITY),
-                                   qc.get(_QC_BOARD_ENTITY))}
+                                   qc.get(_QC_BOARD_ENTITY),
+                                   qc.get(_QC_REQUEST_ENTITY))}
 
     def _reload_electrodes(self) -> pd.DataFrame:
         """The Electrodes tab's frame, after whatever moved.

@@ -1,0 +1,107 @@
+{
+  "schema": "dbo",
+  "table": "MetaData",
+  "source": "dataloggingDev",
+  "electrodes_only": false,
+  "columns": [
+    {
+      "name": "Id",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Date",
+      "type": "DATETIMEOFFSET",
+      "length": null,
+      "precision": null,
+      "scale": null,
+      "datetime_precision": 7,
+      "nullable": false
+    },
+    {
+      "name": "Vb_total",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Vb_dag",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Start_tid",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Man_stop_tid",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Alarm_tid",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Flight_bar_nr",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Rcp_nr",
+      "type": "BIGINT",
+      "length": null,
+      "precision": 19,
+      "scale": 0,
+      "datetime_precision": null,
+      "nullable": false
+    },
+    {
+      "name": "Full_name",
+      "type": "NVARCHAR",
+      "length": -1,
+      "precision": null,
+      "scale": null,
+      "datetime_precision": null,
+      "nullable": true
+    },
+    {
+      "name": "Marking",
+      "type": "NVARCHAR",
+      "length": 450,
+      "precision": null,
+      "scale": null,
+      "datetime_precision": null,
+      "nullable": true
+    }
+  ]
+}

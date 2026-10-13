@@ -105,7 +105,10 @@ class DataTableWidget(QTableWidget):
     ZOOM_MIN = 0.8
     ZOOM_MAX = 1.8
     ZOOM_STEP = 0.1
-    BASE_ROW_HEIGHT = 30
+    # Four more than it was. The badges very nearly filled a thirty pixel row
+    # and a table of them read as one solid block; the air between is what
+    # lets the eye find a row again after looking away.
+    BASE_ROW_HEIGHT = 34
     LINE_HEIGHT = 25
     """Renders a DataFrame; cell text goes through an optional format callback."""
 

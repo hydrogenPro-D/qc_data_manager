@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from ..styles.button_styles import (
+    DANGER_BUTTON_STYLE,
     PRIMARY_BUTTON_STYLE,
     SECONDARY_BUTTON_STYLE,
     apply_modern_shadow,
@@ -239,3 +240,72 @@ class ErrorSavingDialog(WarningDialog):
         )
 
 
+
+
+class ConfirmDialog(QDialog):
+    """A yes or no, wearing the same header band as the rest of them.
+
+    QMessageBox is the obvious thing to reach for and it looks like nothing
+    else in this application: a system icon, a system font and buttons in the
+    platform's order. This asks the same question in the application's own
+    clothes.
+
+    THE CONFIRMING BUTTON SAYS WHAT IT DOES, "Request" rather than "Yes", so
+    an operator reading only the buttons still knows what they are agreeing
+    to. Cancel is the default, so a stray Enter does nothing.
+    """
+
+    def __init__(self, parent=None, title: str = "Confirm",
+                 question: str = "", confirm_text: str = "Yes",
+                 icon: str = "?", header_color: str = "#14B8A6",
+                 danger: bool = False) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(420)
+        self.setStyleSheet("QDialog { background-color: #FFFFFF; }")
+
+        prompt = QLabel(question)
+        prompt.setWordWrap(True)
+        prompt.setStyleSheet("color: #1F1F1F; font-size: 14px; font-weight: 600;")
+
+        cancel = QPushButton("Cancel")
+        cancel.setMinimumHeight(38)
+        cancel.setStyleSheet(SECONDARY_BUTTON_STYLE)
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel.clicked.connect(self.reject)
+        cancel.setDefault(True)
+
+        confirm = QPushButton(confirm_text)
+        confirm.setMinimumHeight(38)
+        confirm.setMinimumWidth(120)
+        confirm.setStyleSheet(DANGER_BUTTON_STYLE if danger
+                              else PRIMARY_BUTTON_STYLE)
+        confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        apply_modern_shadow(confirm)
+        confirm.clicked.connect(self.accept)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(cancel, 0)
+        buttons.addWidget(confirm, 0)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(24, 22, 24, 20)
+        body.setSpacing(18)
+        body.addWidget(prompt, 1)
+        body.addLayout(buttons)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(build_header(icon, title, header_color))
+        layout.addLayout(body, 1)
+        self.setLayout(layout)
+
+
+def ask(parent, title: str, question: str, confirm_text: str = "Yes",
+        icon: str = "?", danger: bool = False) -> bool:
+    """Put the question and return whether it was agreed to."""
+    dialog = ConfirmDialog(parent, title=title, question=question,
+                           confirm_text=confirm_text, icon=icon, danger=danger)
+    return dialog.exec() == QDialog.DialogCode.Accepted

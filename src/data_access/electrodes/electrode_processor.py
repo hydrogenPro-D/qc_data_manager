@@ -10,6 +10,9 @@ import pandas as pd
 
 from src.data_access.electrodes.electrode_columns import (
     DECIDED,
+    FAILED_CRACK,
+    FAILED_IC,
+    FAILURE_COLUMN,
     ElectrodeColumns,
     ElectrodeStatus,
     STATUS_COLUMN,
@@ -21,6 +24,12 @@ from src.data_access.electrodes.electrode_columns import (
 )
 from src.data_access.electrodes.status_propagation import propagate_detailed
 from src.data_access.electrodes.waiting_status import waiting_statuses
+from src.data_access.qc_requests.request_columns import (QC_STATUS_COLUMN,
+                                                         state_label)
+from src.data_access.qc_board.qc_board_columns import (IC_FAILED,
+                                                       IC_RESULT,
+                                                       SEM_CRACKED,
+                                                       SEM_RESULT)
 
 
 class ElectrodeProcessor:
@@ -36,7 +45,8 @@ class ElectrodeProcessor:
                  pinned_provider=None,
                  finalised_provider=None,
                  findings_provider=None,
-                 revisited_provider=None) -> None:
+                 revisited_provider=None,
+                 qc_request_provider=None) -> None:
         # Handed in, read once per backend rather than per refresh. The
         # backend owns where they come from, which keeps this class pure data
         # in, data out and lets tests pass a dict.
@@ -81,6 +91,9 @@ class ElectrodeProcessor:
         # {marking: the live verdict whose re-test unfroze it}. Those move
         # with that card even when another decision settles them.
         self._revisited_provider = revisited_provider
+        # {marking: request state}. Read on every process(), so a decision
+        # taken in the other application shows up on the next poll.
+        self._qc_request_provider = qc_request_provider
 
     def set_base_status(self, marking: str, status: str) -> None:
         """Record a status set by hand, so the next process() shows it.
@@ -127,6 +140,9 @@ class ElectrodeProcessor:
         out[PRIORITY_COLUMN] = markings.map(
             lambda marking: PRIORITY_FLAG if marking in priorities else "")
         out[LOCKED_BY_COLUMN] = markings.map(locked_by).fillna("")
+        out[FAILURE_COLUMN] = [
+            self._failure_codes(marking, status)
+            for marking, status in zip(markings, out[STATUS_COLUMN].astype(str))]
         # Blank wherever nothing has actually settled, whatever the database
         # holds, and it can hold a stale date for either case:
         #
@@ -149,6 +165,9 @@ class ElectrodeProcessor:
         # all agree.
         out[FINALISED_COLUMN] = markings.map(self._finalised()).fillna("").where(
             settled, "")
+        requests = dict(self._qc_request_provider() or {})             if self._qc_request_provider else {}
+        out[QC_STATUS_COLUMN] = markings.map(
+            lambda marking: state_label(requests.get(marking, "")))
         vats = self._vats()
         if vats or self._vats_pending():
             # A dict lookup per marking, never a join against the process log.
@@ -159,6 +178,27 @@ class ElectrodeProcessor:
     def _vats(self) -> dict[str, str]:
         """``{marking: vat}``, empty when the process log is out of reach."""
         return dict(self._vat_provider() or {}) if self._vat_provider else {}
+
+    def _failure_codes(self, marking: str, status: str) -> str:
+        """Why this electrode failed, or "" where there is nothing to say.
+
+        Only for one somebody actually put on a rig. A neighbour swept into
+        Rejected was never tested and never observed, so it has no reason and
+        must not borrow the tested one's.
+
+        Both can be true at once, and neither has to be: an operator who left
+        the findings blank leaves a failure with no reason, which is shown as
+        no badge rather than as a guess.
+        """
+        if status != str(ElectrodeStatus.TESTED_AND_SCRAPPED) or not self._findings_provider:
+            return ""
+        found = self._findings_provider(marking) or {}
+        codes = []
+        if str(found.get(IC_RESULT, "")) == IC_FAILED:
+            codes.append(FAILED_IC)
+        if str(found.get(SEM_RESULT, "")) == SEM_CRACKED:
+            codes.append(FAILED_CRACK)
+        return ",".join(codes)
 
     def _finalised(self) -> dict[str, str]:
         """``{marking: when its status settled}``, empty where nothing has."""
@@ -176,8 +216,8 @@ class ElectrodeProcessor:
         columns = [c.value for c in ElectrodeColumns]
         if self._vats() or self._vats_pending():
             columns.append(VAT_COLUMN)
-        return columns + [STATUS_COLUMN, FINALISED_COLUMN, PRIORITY_COLUMN,
-                          LOCKED_BY_COLUMN]
+        return columns + [STATUS_COLUMN, QC_STATUS_COLUMN, FINALISED_COLUMN,
+                          PRIORITY_COLUMN, LOCKED_BY_COLUMN, FAILURE_COLUMN]
 
     def status_for(self, df: pd.DataFrame) -> pd.Series:
         """Per-electrode QC status, joined on the marking.

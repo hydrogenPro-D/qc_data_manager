@@ -143,6 +143,11 @@ class QcBoardDbStore:
                     "from": str(row.get("caused_by") or marking),
                     "at": str(row.get("archived_at_utc") or ""),
                     "priority": bool(row.get("test_first")),
+                    # Feature by presence: a database still on 015 returns no
+                    # such columns and every frozen verdict reads as having had
+                    # nothing written down, which is what it was.
+                    **{field: _finding(row.get(field), field)
+                       for field in FINDING_FIELDS},
                 }
 
         # Ordered by production number rather than by when a card was dropped
@@ -442,8 +447,16 @@ class QcBoardDbStore:
                 if entry.get("priority")}
 
     def findings(self, marking: str) -> dict:
-        """What has been observed about one electrode so far."""
-        entry = self._entries.get(str(marking).strip()) or {}
+        """What has been observed about one electrode so far.
+
+        The live card first, then the frozen one. An electrode is rarely both,
+        and where it is, the card is the newer of the two: it is on the board
+        again precisely because the old answer is being revisited.
+        """
+        key = str(marking).strip()
+        entry = self._entries.get(key)
+        if entry is None:
+            entry = self._archived.get(key) or {}
         return {field: _finding(entry.get(field), field) for field in FINDING_FIELDS}
 
     def can_undo(self) -> bool:

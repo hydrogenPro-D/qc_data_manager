@@ -656,8 +656,20 @@ def _table(headers, compact: bool = False, parent=None,
 class QcSamplingWidget(QWidget):
     """Range in, run lengths out. A tab, with no backend of its own."""
 
-    def __init__(self) -> None:
+    def __init__(self, get_intervals=None, on_interval_changed=None) -> None:
+        """Injected callables only, no backend.
+
+        ``get_intervals`` returns ``{vat: electrodes between samples}`` and
+        ``on_interval_changed(vat, value)`` returns False when it could not be
+        saved. Both default to None so the tab still builds in a test with no
+        database behind it, and then every vat reads at the default.
+        """
         super().__init__()
+        self._get_intervals = get_intervals
+        self._on_interval_saved = on_interval_changed
+        # The last answer from the database, so the panels can be redrawn
+        # without a query per spin box.
+        self._intervals: dict[str, int] = {}
         self.frame: pd.DataFrame | None = None
         self._analysis = Analysis()
         # Whether the range boxes have been filled in from real data yet, so a
@@ -1101,7 +1113,7 @@ class QcSamplingWidget(QWidget):
             spin = QSpinBox(panel["inner"])
             spin.setRange(current_intervals.MIN_INTERVAL,
                           current_intervals.MAX_INTERVAL)
-            spin.setValue(current_intervals.current_for(vat))
+            spin.setValue(current_intervals.current_for(self._intervals, vat))
             spin.setMinimumHeight(BAR_HEIGHT)
             spin.setStyleSheet(INPUT_FIELD_STYLE)
             # Otherwise typing 15 over 12 saves 1 on the way to 15. The value
@@ -1121,7 +1133,26 @@ class QcSamplingWidget(QWidget):
             panel["rows"][vat] = {"spin": spin, "note": note}
 
     def _on_interval_changed(self, vat: str, value: int) -> None:
-        current_intervals.set_current(vat, value)
+        """Save it, then redraw every tab's panel from what was saved.
+
+        The local copy is only updated once the write has been accepted, so a
+        figure that could not be stored does not sit on screen looking as
+        though it had been.
+        """
+        if self._on_interval_saved is not None and not self._on_interval_saved(vat, value):
+            self._refresh_interval_panels()
+            return
+        self._intervals[str(vat)] = int(value)
+        self._refresh_interval_panels()
+
+    def reload_intervals(self) -> None:
+        """Re-read the intervals and redraw the panels.
+
+        The other application reads the same table, so a figure set on another
+        machine has to arrive here without a restart.
+        """
+        if self._get_intervals is not None:
+            self._intervals = dict(self._get_intervals() or {})
         self._refresh_interval_panels()
 
     def _refresh_interval_panels(self) -> None:
@@ -1132,7 +1163,7 @@ class QcSamplingWidget(QWidget):
         """
         for panel in self._interval_panels:
             for vat, row in panel["rows"].items():
-                current = current_intervals.current_for(vat)
+                current = current_intervals.current_for(self._intervals, vat)
                 if row["spin"].value() != current:
                     # Blocked, or setting the other tabs' boxes would come
                     # straight back in here as another edit.

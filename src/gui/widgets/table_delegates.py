@@ -14,8 +14,11 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt, QObject, QPointF, QRectF, QSize, QTimer
-from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QFontMetrics
+from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QPainter,
+                         QPen, QPolygonF)
 from PyQt6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+
+from src.data_access.electrodes.electrode_columns import FAILED_CRACK
 
 BAR_WIDTH = 4
 DEFAULT_TEXT = "#1F1F1F"
@@ -295,12 +298,246 @@ class LoadingCellDelegate(RowFillDelegate):
     _placeholder_color = "#94A3B8"
 
 
+class RequestActionDelegate(QStyledItemDelegate):
+    """The QC request column: a badge, and the buttons that change it.
+
+    Painted rather than built from widgets. There are thirteen thousand rows
+    and a QPushButton in each would cost thirteen thousand widgets to show
+    three of them; the table already paints its badges, so the buttons are
+    painted beside them and a click is worked out from where it landed.
+
+    Three shapes, one per situation:
+
+    * no request, so there is something to ask for. A quiet outline that wakes
+      up under the cursor, because a column of thirteen thousand live buttons
+      is a column nobody can read.
+    * a request this application has to answer, so a tick and a cross beside
+      the badge.
+    * anything else, which is a badge and nothing to do.
+    """
+
+    # Matches StatusPillDelegate, so the two columns line up.
+    RADIUS = 3
+    PADDING_X = 14
+    PADDING_Y = 4
+    MIN_WIDTH = 96
+    TEXT_CUSHION = 8
+
+    ACTION_SIZE = 20
+    ACTION_GAP = 6
+    APPROVE = "approve"
+    DECLINE = "decline"
+    REQUEST = "request"
+
+    ASK_LABEL = "Request for QC"
+    # Asleep, and awake under the cursor.
+    ASK_IDLE = "#AFB6BF"
+    ASK_LIVE = "#0B7268"
+    APPROVE_INK = "#0B7268"
+    DECLINE_INK = "#8E1537"
+
+    def __init__(self, style_for_value, parent=None,
+                 answerable: str = "", highlight=None) -> None:
+        """Args:
+            style_for_value: maps a cell's text to the badge style.
+            answerable: the one label that gets a tick and a cross beside it.
+            highlight: the row wash, painted the same as the other columns.
+        """
+        super().__init__(parent)
+        self._style_for_value = style_for_value
+        self._answerable = answerable
+        self._highlight = highlight
+
+    # -- what is where ----------------------------------------------------
+    def action_at(self, rect: QRectF, point, text: str) -> str:
+        """Which button this click landed on, or "" for none.
+
+        The same arithmetic as paint, so the two cannot drift: anything that
+        moves a button moves its target with it.
+        """
+        label = str(text or "").strip()
+        if not label:
+            return self.REQUEST if self._ask_rect(rect).contains(point) else ""
+        if label != self._answerable:
+            return ""
+        approve, decline = self._answer_rects(rect, self._drawn(label))
+        if approve.contains(point):
+            return self.APPROVE
+        if decline.contains(point):
+            return self.DECLINE
+        return ""
+
+    def _ask_font(self) -> QFont:
+        """The same font a badge uses.
+
+        It was smaller for a while, on the theory that an offer should sit
+        back behind the facts. Side by side it just looked like a badge that
+        had come out wrong. Same size, same weight; the colour is what says it
+        is a button rather than a state.
+        """
+        return self._font()
+
+    def _ask_rect(self, rect: QRectF) -> QRectF:
+        """The ask button, the size and shape a badge in this row would be."""
+        return self._pill_rect(rect, self.ASK_LABEL)
+
+    def _drawn(self, text: str) -> str:
+        """The label as painted, glyph and all, so widths agree everywhere."""
+        style = self._style_for_value(text)
+        glyph = getattr(style, "glyph", "") if style is not None else ""
+        return f"{glyph}  {text}" if glyph else text
+
+    def _answer_rects(self, rect: QRectF, label: str) -> tuple:
+        """The tick and the cross, to the right of the badge."""
+        size = float(self.ACTION_SIZE)
+        both = 2 * size + self.ACTION_GAP
+        pill = self._pill_rect(rect, label, reserve=both + self.ACTION_GAP)
+        top = pill.center().y() - size / 2
+        left = pill.right() + self.ACTION_GAP
+        return (QRectF(left + size + self.ACTION_GAP, top, size, size),
+                QRectF(left, top, size, size))
+
+    def _pill_rect(self, rect: QRectF, label: str, reserve: float = 0.0) -> QRectF:
+        metrics = QFontMetrics(self._font())
+        width = min(max(float(self.MIN_WIDTH),
+                        metrics.horizontalAdvance(label) + 2 * self.PADDING_X
+                        + self.TEXT_CUSHION),
+                    max(0.0, rect.width() - 8 - reserve))
+        height = float(metrics.height() + 2 * self.PADDING_Y)
+        return QRectF(rect.left() + (rect.width() - reserve - width) / 2,
+                      rect.top() + (rect.height() - height) / 2, width, height)
+
+    def _font(self) -> QFont:
+        font = QFont()
+        font.setBold(True)
+        font.setPointSizeF(8.0)
+        return font
+
+    # -- painting ---------------------------------------------------------
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        text = str(index.data() or "").strip()
+        background = _background_of(index)
+        painter.save()
+        painter.fillRect(option.rect, background if background
+                         else option.palette.base())
+        if self._highlight is not None:
+            self._highlight.paint(painter, option, index)
+        painter.restore()
+
+        rect = QRectF(option.rect)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setFont(self._font())
+        if not text:
+            self._paint_ask(painter, rect, hovered)
+        else:
+            self._paint_badge(painter, rect, text)
+        painter.restore()
+
+    def _paint_ask(self, painter: QPainter, rect: QRectF, hovered: bool) -> None:
+        colour = QColor(self.ASK_LIVE if hovered else self.ASK_IDLE)
+        button = self._ask_rect(rect)
+        painter.setFont(self._ask_font())
+        painter.setBrush(QBrush(QColor("#E6F6F6")) if hovered
+                         else Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(colour, 1.2))
+        painter.drawRoundedRect(button, self.RADIUS, self.RADIUS)
+        painter.setPen(QPen(colour))
+        painter.drawText(button, Qt.AlignmentFlag.AlignCenter, self.ASK_LABEL)
+
+    def _paint_badge(self, painter: QPainter, rect: QRectF, text: str) -> None:
+        style = self._style_for_value(text)
+        if style is None:
+            painter.setPen(QPen(QColor("#1F1F1F")))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+            return
+
+        answerable = text == self._answerable
+        reserve = (2 * self.ACTION_SIZE + 2 * self.ACTION_GAP
+                   if answerable else 0.0)
+        # Measured with the glyph, because that is what gets drawn. Measuring
+        # the bare text left the tick taking room the elide had not budgeted
+        # for, and "Approved, waiting" came out cut short.
+        label = f"{style.glyph}  {text}" if style.glyph else text
+        pill = self._pill_rect(rect, label, reserve)
+        painter.setBrush(QBrush(QColor(style.background))
+                         if style.background else Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(style.color), 1.2))
+        painter.drawRoundedRect(pill, self.RADIUS, self.RADIUS)
+        painter.setPen(QPen(QColor(style.text or style.color)))
+        metrics = painter.fontMetrics()
+        painter.drawText(pill, Qt.AlignmentFlag.AlignCenter,
+                         metrics.elidedText(label, Qt.TextElideMode.ElideRight,
+                                            int(pill.width()) - 2 * self.PADDING_X))
+        if answerable:
+            approve, decline = self._answer_rects(rect, label)
+            self._paint_tick(painter, approve)
+            self._paint_cross(painter, decline)
+
+    def _paint_tick(self, painter: QPainter, disc: QRectF) -> None:
+        self._disc(painter, disc, self.APPROVE_INK)
+        pen = QPen(QColor("#FFFFFF"))
+        pen.setWidthF(max(1.6, disc.height() * 0.12))
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        left, top, size = disc.left(), disc.top(), disc.height()
+        painter.drawPolyline(QPolygonF([
+            QPointF(left + size * 0.28, top + size * 0.52),
+            QPointF(left + size * 0.44, top + size * 0.68),
+            QPointF(left + size * 0.74, top + size * 0.32)]))
+
+    def _paint_cross(self, painter: QPainter, disc: QRectF) -> None:
+        self._disc(painter, disc, self.DECLINE_INK)
+        pen = QPen(QColor("#FFFFFF"))
+        pen.setWidthF(max(1.6, disc.height() * 0.12))
+        painter.setPen(pen)
+        left, top, size = disc.left(), disc.top(), disc.height()
+        painter.drawLine(QPointF(left + size * 0.32, top + size * 0.32),
+                         QPointF(left + size * 0.68, top + size * 0.68))
+        painter.drawLine(QPointF(left + size * 0.68, top + size * 0.32),
+                         QPointF(left + size * 0.32, top + size * 0.68))
+
+    @staticmethod
+    def _disc(painter: QPainter, disc: QRectF, colour: str) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(colour)))
+        painter.drawEllipse(disc)
+
+    def _known_labels(self) -> tuple:
+        """Every label this column can hold, for measuring the column once.
+
+        Qt samples the first thousand rows when it sizes a column, and the
+        longest state is easily absent from those: 13,000 electrodes and a
+        handful of requests.
+        """
+        return tuple(getattr(self, "_labels", ()) or (self._answerable,))
+
+    def set_labels(self, labels) -> None:
+        """Every state this column can show, so the width is not guessed."""
+        self._labels = tuple(labels)
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        """Wide enough for the longest badge AND the two buttons beside it."""
+        metrics = QFontMetrics(self._font())
+        widest = max(metrics.horizontalAdvance(self._drawn(self._answerable or "")),
+                     *(metrics.horizontalAdvance(self._drawn(label))
+                       for label in self._known_labels()),
+                     metrics.horizontalAdvance(self.ASK_LABEL),
+                     self.MIN_WIDTH)
+        needed = (widest + 2 * self.PADDING_X + self.TEXT_CUSHION
+                  + 2 * self.ACTION_SIZE + 3 * self.ACTION_GAP + 16)
+        return QSize(int(needed), max(metrics.height() + 2 * self.PADDING_Y + 6, 30))
+
+
 class StatusPillDelegate(QStyledItemDelegate):
     """Draws the cell's text as a rounded, bordered badge instead of plain text."""
 
-    # Softened corners, not a capsule: at the badge's height a radius near
-    # half of it reads as a pill and crowds the text at the ends.
-    RADIUS = 6
+    # Barely softened. A radius anywhere near half the badge's height reads as
+    # a capsule, which is the shape every generated interface reaches for;
+    # just enough to take the hard corner off looks like something somebody
+    # drew on purpose.
+    RADIUS = 3
     PADDING_X = 14
     PADDING_Y = 4
     MIN_WIDTH = 96
@@ -308,11 +545,24 @@ class StatusPillDelegate(QStyledItemDelegate):
     # budget lands exactly on the text advance and rounding trims a character.
     TEXT_CUSHION = 8
 
+    # The failure badges. A filled disc each, the height of the pill's text,
+    # drawn to the right of it.
+    BADGE_SIZE = 17
+    BADGE_GAP = 5
+    # Room kept for badges whether or not this row has any, so every pill in
+    # the column lands in the same place. Reserving only what a row needs put
+    # the badged rows' pills a few pixels left of the rest, and a column of
+    # badges that do not line up reads as worse than no badges.
+    BADGE_SLOTS = 2
+    BADGE_FILL = "#C81E1E"
+    BADGE_INK = "#FFFFFF"
+
     def __init__(self, style_for_value: Callable[[str], Optional[PillStyle]],
                  parent=None, right_gutter: int = 0, widest_label: str = "",
                  highlight: Optional[RowHighlight] = None,
                  width_text: Optional[Callable[[str], str]] = None,
-                 display_text: Optional[Callable[[str], str]] = None) -> None:
+                 display_text: Optional[Callable[[str], str]] = None,
+                 badges_for: Optional[Callable[[int], tuple]] = None) -> None:
         """Args:
             style_for_value: Maps a cell's text to the badge style to draw.
             right_gutter: Pixels kept clear on the right of the cell, room for a
@@ -337,6 +587,7 @@ class StatusPillDelegate(QStyledItemDelegate):
         self._highlight = highlight
         self._width_text = width_text
         self._display_text = display_text
+        self._badges_for = badges_for
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         text = str(index.data() or "").strip()
@@ -365,6 +616,12 @@ class StatusPillDelegate(QStyledItemDelegate):
         painter.setFont(font)
 
         metrics = painter.fontMetrics()
+        badges = tuple(self._badges_for(index.row())) if self._badges_for else ()
+        # THE BADGES DO NOT MOVE THE PILL. Taking their room off the centring
+        # budget put a badged row's pill a few pixels left of every other one,
+        # and a column of pills that do not line up reads worse than no badges
+        # at all. The pill is centred on the cell and the badges hang off its
+        # right; sizeHint is what makes sure there is room for them.
         available = max(0, option.rect.width() - 8 - self._right_gutter)
         measured = self._width_text(label) if self._width_text else label
         wanted = (metrics.horizontalAdvance(measured) + 2 * self.PADDING_X
@@ -375,7 +632,8 @@ class StatusPillDelegate(QStyledItemDelegate):
         # Centred in what's left after the gutter, so a hover control on the
         # right never lands on top of the badge.
         pill = QRectF(
-            option.rect.left() + (option.rect.width() - self._right_gutter - width) / 2,
+            option.rect.left()
+            + (option.rect.width() - self._right_gutter - width) / 2,
             option.rect.top() + (option.rect.height() - height) / 2,
             width, height,
         )
@@ -389,7 +647,67 @@ class StatusPillDelegate(QStyledItemDelegate):
             pill, Qt.AlignmentFlag.AlignCenter,
             metrics.elidedText(label, Qt.TextElideMode.ElideRight,
                                int(width) - 2 * self.PADDING_X))
+        self._paint_badges(painter, option, pill, badges)
         painter.restore()
+
+    def _paint_badges(self, painter: QPainter, option: QStyleOptionViewItem,
+                      pill: QRectF, badges: tuple) -> None:
+        """A disc per reason, in the room reserved for them beside the pill.
+
+        Drawn rather than loaded: the artwork is two shapes, and a file on disk
+        would have to be found at runtime, shipped by the build and scaled for
+        the zoom. The rest of this application draws its icons too.
+        """
+        if not badges:
+            return
+        size = self.BADGE_SIZE
+        top = pill.center().y() - size / 2
+        left = pill.right() + self.BADGE_GAP
+        # Never past the cell's edge, however narrow the column is dragged.
+        room = option.rect.right() - 2 - len(badges) * (size + self.BADGE_GAP)
+        left = min(left, max(float(option.rect.left()), float(room)))
+        for code in badges:
+            disc = QRectF(left, top, size, size)
+            painter.setBrush(QBrush(QColor(self.BADGE_FILL)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(disc)
+            if code == FAILED_CRACK:
+                self._paint_crack(painter, disc)
+            else:
+                self._paint_initials(painter, disc, code.upper())
+            left += size + self.BADGE_GAP
+
+    def _paint_initials(self, painter: QPainter, disc: QRectF, text: str) -> None:
+        """Two letters, sized to the disc rather than to the table's font."""
+        font = QFont(painter.font())
+        font.setBold(True)
+        font.setPointSizeF(max(5.5, disc.height() * 0.42))
+        painter.setFont(font)
+        painter.setPen(QPen(QColor(self.BADGE_INK)))
+        painter.drawText(disc, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _paint_crack(self, painter: QPainter, disc: QRectF) -> None:
+        """A split down the disc, which is what a cracked one looks like.
+
+        A zig-zag rather than a straight line: a straight one reads as a slash,
+        which already means "not applicable" everywhere else.
+        """
+        inset = disc.height() * 0.22
+        top, bottom = disc.top() + inset, disc.bottom() - inset
+        middle = disc.center().x()
+        step = disc.width() * 0.16
+        crack = QPolygonF([
+            QPointF(middle - step * 0.4, top),
+            QPointF(middle + step, top + (bottom - top) * 0.32),
+            QPointF(middle - step, top + (bottom - top) * 0.62),
+            QPointF(middle + step * 0.5, bottom),
+        ])
+        pen = QPen(QColor(self.BADGE_INK))
+        pen.setWidthF(max(1.4, disc.height() * 0.11))
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolyline(crack)
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
         """Wide enough for the badge *and* the gutter.
@@ -404,6 +722,12 @@ class StatusPillDelegate(QStyledItemDelegate):
             return super().sizeHint(option, index)
 
         metrics = QFontMetrics(self._label_font(option))
+        # NO ROOM ADDED FOR THE BADGES. The column is already sized for its
+        # longest label, and the rows that carry badges are never the rows
+        # with that label: a failure is a short word and the long one is a
+        # wait. So centring a short pill in a column sized for a long one
+        # leaves more than enough either side, and padding on top only made
+        # the whole column wider than it needed to be.
         needed = max(self._label_width(metrics, self._label(style, text)),
                      self._label_width(metrics, self._widest_label),
                      self.MIN_WIDTH + 16 + self._right_gutter)

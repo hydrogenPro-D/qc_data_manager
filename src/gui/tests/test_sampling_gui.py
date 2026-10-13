@@ -4,8 +4,6 @@ No backend anywhere: the tab is given the same processed frame MainWindow hands
 the Electrodes table, which is the whole point of wiring it this way.
 """
 
-import os
-import tempfile
 import unittest
 
 import pandas as pd
@@ -53,20 +51,24 @@ def a_vat(vat: str, start: int, pattern: str):
 class _Tab(unittest.TestCase):
 
     def setUp(self) -> None:
-        self._path, self._cache = ci._PATH, ci._cache
-        handle, path = tempfile.mkstemp(suffix=".json")
-        os.close(handle)
-        os.remove(path)
-        ci._PATH, ci._cache = path, None
-
+        # A fake for the two callables MainWindow injects, so the tab is tested
+        # with no database and nothing on disk. The dict IS the table.
+        self.stored: dict[str, int] = {}
+        self.refused = False
         self.host = QWidget()
-        self.tab = QcSamplingWidget()
+        self.tab = QcSamplingWidget(
+            get_intervals=lambda: dict(self.stored),
+            on_interval_changed=self._save)
         self.tab.setParent(self.host)
 
+    def _save(self, vat: str, value: int) -> bool:
+        if self.refused:
+            return False
+        self.stored[str(vat)] = int(value)
+        return True
+
     def tearDown(self) -> None:
-        if os.path.exists(ci._PATH):
-            os.remove(ci._PATH)
-        ci._PATH, ci._cache = self._path, self._cache
+        self.host.deleteLater()
 
     @staticmethod
     def _rows():
@@ -516,3 +518,57 @@ class TestTheTabCanBeMadeShorter(_Tab):
         plot = self.tab._vat_pages["Vat 28"][1].widget
         self.assertEqual(plot.minimumHeight(), MIN_PLOT_HEIGHT)
         self.assertLess(MIN_PLOT_HEIGHT, 200)
+
+
+class TestTheIntervalsComeFromTheDatabase(_Tab):
+    """They used to be a file on one machine. Now both applications read them.
+
+    The tab holds no connection, so what is tested here is the contract with
+    MainWindow: it asks for the intervals, it saves through the callable, and
+    it believes the answer rather than the spin box.
+    """
+
+    def _panels(self):
+        """The panels exist once there is something to measure."""
+        self.tab.load_data(frame(self._rows()))
+        self.tab.reload_intervals()
+        return self.tab._interval_panels
+
+    def test_a_vat_with_no_row_shows_the_default(self) -> None:
+        self._panels()
+        panel = self.tab._interval_panels[0]
+        for row in panel["rows"].values():
+            self.assertEqual(row["spin"].value(), ci.DEFAULT_INTERVAL)
+
+    def test_what_is_stored_is_what_is_shown(self) -> None:
+        self.stored = {"28": 17}
+        panel = self._panels()[0]
+        self.assertEqual(panel["rows"]["28"]["spin"].value(), 17)
+
+    def test_turning_the_box_saves_it(self) -> None:
+        self._panels()
+        self.tab._on_interval_changed("28", 21)
+        self.assertEqual(self.stored, {"28": 21})
+
+    def test_a_write_that_failed_does_not_stick_on_screen(self) -> None:
+        """Otherwise the figure reads as saved when the database refused it."""
+        self.stored = {"28": 17}
+        self._panels()
+        self.refused = True
+        self.tab._on_interval_changed("28", 21)
+        self.assertEqual(self.stored, {"28": 17})
+        self.assertEqual(self.tab._interval_panels[0]["rows"]["28"]["spin"].value(),
+                         17)
+
+    def test_every_tab_shows_the_same_figure(self) -> None:
+        """An interval is a vat's, not a range's, so all the panels agree."""
+        self._panels()
+        self.tab._on_interval_changed("28", 21)
+        for panel in self.tab._interval_panels:
+            self.assertEqual(panel["rows"]["28"]["spin"].value(), 21)
+
+    def test_it_still_opens_with_no_callables_at_all(self) -> None:
+        """MainWindow builds it before the backend is reachable in tests."""
+        bare = QcSamplingWidget()
+        bare.reload_intervals()
+        bare.deleteLater()

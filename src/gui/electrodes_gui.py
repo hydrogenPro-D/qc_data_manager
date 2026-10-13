@@ -12,8 +12,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QToolButton, QDialog,
     QPushButton, QScrollArea, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QEvent, QObject, QSize, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import (Qt, QEvent, QObject, QPointF, QRectF, QSize,
+                          QTimer)
+from PyQt6.QtGui import QCursor, QFont
 import pandas as pd
 import qtawesome as qta
 
@@ -30,7 +31,9 @@ from .widgets.report_dialog import ReportDialog, build_report_html
 from src.data_access.electrodes.status_ranges import collapse_to_ranges
 from .widgets.data_table_widget import DataTableWidget, CellStyle
 from .widgets.filter_bar_widget import FilterBarWidget, FilterDropdown
-from .widgets.table_delegates import (RowFillDelegate, StatusPillDelegate,
+from .widgets.error_dialogs import WarningDialog, ask
+from .widgets.table_delegates import (
+    RequestActionDelegate,RowFillDelegate, StatusPillDelegate,
                                       PillStyle, RowHighlight, RowFlasher,
                                       LoadingCellDelegate)
 from .widgets.skeleton_overlay import (SkeletonOverlay, SHIMMER_TICK_MS,
@@ -40,6 +43,15 @@ from src.data_access.electrodes.status_propagation import electrode_number
 from .widgets.status_edit_dialog import StatusEditDialog
 from .date_display import (format_utc_date_for_display,
                            format_utc_timestamp_for_display)
+from src.data_access.qc_requests.request_columns import (
+    AWAITING_PRODUCTION,
+    AWAITING_QC,
+    DECLINED,
+    QC_STATUS_COLUMN,
+    SENT,
+    TO_BE_SENT,
+    state_label as request_label,
+)
 from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
@@ -48,6 +60,9 @@ from src.data_access.electrodes.electrode_columns import (
     PRIORITY_COLUMN,
     PRIORITY_FLAG,
     LOCKED_BY_COLUMN,
+    FAILED_CRACK,
+    FAILED_IC,
+    FAILURE_COLUMN,
     FINALISED_COLUMN,
     NEVER_STORED,
     status_family,
@@ -65,6 +80,9 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     # column the frame does not carry.
     VAT_COLUMN: "Vat",
     STATUS_COLUMN: "Status",
+    # Between the verdict and when it settled: the request is what happens
+    # before an electrode has a verdict at all.
+    QC_STATUS_COLUMN: "QC request",
     FINALISED_COLUMN: "Status finalised",
 }
 
@@ -173,11 +191,48 @@ def status_pill_style(value: str) -> PillStyle | None:
             return style
     return None
 
+# What a QC request looks like in its column. The same vocabulary as the
+# status pills: an outline for something still moving, a filled badge for an
+# outcome. Amber for a question nobody has answered, blue for one pointed at
+# this application, teal for agreed, grey for closed.
+QC_PILL_STYLES: dict[str, PillStyle] = {
+    request_label(AWAITING_PRODUCTION): PillStyle(color="#B45309"),
+    request_label(AWAITING_QC): PillStyle(color="#1D4ED8", background="#DBEAFE"),
+    request_label(TO_BE_SENT): PillStyle(color="#0B7268", glyph="✓"),
+    request_label(SENT): PillStyle(
+        color="#0B7268", background="#0B7268", text="#FFFFFF", glyph="✓"),
+    request_label(DECLINED): PillStyle(color="#555B64"),
+}
+
+# The longest of them, so the column is measured for its widest badge rather
+# than for whatever happens to be in the first thousand rows.
+WIDEST_QC_LABEL = max(QC_PILL_STYLES, key=len)
+
+
+def qc_pill_style(text: str) -> PillStyle | None:
+    """The badge for one QC request state, or None for a row with no request."""
+    return QC_PILL_STYLES.get(str(text).strip())
+
+
+# What the Failure filter offers. The two reasons a test can give, plus the
+# electrodes that failed and never had one written down, which is the only way
+# to find the ones somebody forgot to fill in.
+FAILURE_IC = "IC failed"
+FAILURE_CRACK = "Cracked"
+FAILURE_NONE = "No reason recorded"
+FAILURE_FILTER_CODES = {FAILURE_IC: FAILED_IC, FAILURE_CRACK: FAILED_CRACK}
+
 # Filter dropdown keys.
+FILTER_FAILURE = "failure"
+FILTER_QC_REQUEST = "qc_request"
 FILTER_STATUS = "status"
 FILTER_TYPE = "type"
 FILTER_RECIPE = "recipe"
 FILTER_VAT = "vat"
+
+# The QC request filter's first option. Most electrodes have no request, and
+# without this there is no way to ask for the ones that do not.
+QC_NONE = "No request"
 
 # The Vat filter's last option. The process log covers most electrodes but not
 # all, and without this the ones it misses can be seen but never picked out.
@@ -321,12 +376,20 @@ class ElectrodesWidget(QWidget):
         on_data_saved=None,
         on_check_for_updates=None,
         on_status_override=None,
+        on_qc_request=None,
+        on_qc_answer=None,
     ) -> None:
         super().__init__(parent)
         self.on_data_saved = on_data_saved
         self.on_check_for_updates = on_check_for_updates
         # ``(marking, status)``. There is no clearing one: see the button.
         self.on_status_override = on_status_override
+        # ``on_qc_request(marking) -> bool`` asks production for one electrode,
+        # ``on_qc_answer(marking, approve) -> bool`` answers one they offered.
+        # Absent, the column still shows requests and the buttons do nothing,
+        # which is what a test with no backend gets.
+        self._on_qc_request = on_qc_request
+        self._on_qc_answer = on_qc_answer
 
         self.table: DataTableWidget | None = None
         # Everything loaded, original column names — the truth the filters work
@@ -368,10 +431,19 @@ class ElectrodesWidget(QWidget):
             FilterDropdown(FILTER_TYPE, "Type"),
             FilterDropdown(FILTER_RECIPE, "Recipe"),
             FilterDropdown(FILTER_VAT, "Vat"),
+            FilterDropdown(FILTER_QC_REQUEST, "QC request"),
+            FilterDropdown(FILTER_FAILURE, "Failure"),
         ], number_range="Electrode", stacked=True, with_clear=True,
            extra_date_range="Status finalised")
         self.filter_bar.set_options(
             FILTER_STATUS, [status_label(s) for s in ElectrodeStatus])
+        # Every state, plus the absence of one. Fixed rather than taken from
+        # the data: a state with nothing in it today is still worth being able
+        # to ask for, and the list is five long.
+        self.filter_bar.set_options(
+            FILTER_QC_REQUEST, [QC_NONE] + list(QC_PILL_STYLES))
+        self.filter_bar.set_options(
+            FILTER_FAILURE, [FAILURE_IC, FAILURE_CRACK, FAILURE_NONE])
         self.filter_bar.changed.connect(self._render)
         # On the filters' second row rather than a line of its own, and in with
         # them rather than at the right edge: out there it belonged to nothing,
@@ -422,7 +494,10 @@ class ElectrodesWidget(QWidget):
         # Content-sized columns rather than an equal share of the width, since
         # most of these hold six characters. Any width left over is then handed
         # back out proportionally so the table still fills its pane.
-        self.table.set_uncapped_columns({COLUMN_DISPLAY_NAMES[STATUS_COLUMN]})
+        # Both sized to their content: the Status column holds a long wait and
+        # the QC request column holds a badge with two buttons beside it.
+        self.table.set_uncapped_columns({COLUMN_DISPLAY_NAMES[STATUS_COLUMN],
+                                         COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]})
         self.table.set_fill_remaining_width(True)
         # A minimum of 0 means "use the size hint", and the hint includes the
         # header's own minimum plus the (deliberately thick) scrollbar — which
@@ -498,10 +573,22 @@ class ElectrodesWidget(QWidget):
         self._pill_delegate = StatusPillDelegate(
             status_pill_style, self.table, right_gutter=32,
             widest_label=WIDEST_STATUS_LABEL, highlight=self._row_highlight,
-            width_text=ongoing_width_text, display_text=self._animated_status)
-        # Which column it is on, decided after every render rather than here.
+            width_text=ongoing_width_text, display_text=self._animated_status,
+            badges_for=self._failure_badges)
+        self._qc_delegate = RequestActionDelegate(
+            qc_pill_style, self.table,
+            answerable=request_label(AWAITING_QC),
+            highlight=self._row_highlight)
+        self._qc_delegate.set_labels(QC_PILL_STYLES)
+        # Which column each is on, decided after every render rather than here.
         self._status_column: int | None = None
+        self._qc_column: int | None = None
         self.table.cellClicked.connect(self._on_cell_clicked)
+        # The ask button is drawn asleep and wakes under the cursor, which the
+        # delegate reads as State_MouseOver. The view only tracks that with
+        # hover turned on for the viewport.
+        self.table.setMouseTracking(True)
+        self.table.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
         # Status ratio of whatever the filters currently show, beside the table.
         self.status_chart = StatusDonutWidget(
@@ -771,6 +858,32 @@ class ElectrodesWidget(QWidget):
             wanted = {status_value(s) for s in statuses}
             mask &= df[STATUS_COLUMN].astype(str).str.strip().isin(wanted)
 
+        wanted_qc = self.filter_bar.values(FILTER_QC_REQUEST)
+        if wanted_qc and QC_STATUS_COLUMN in df.columns:
+            # The column already holds the label, so no mapping back: what is
+            # ticked is what is in the cell, with the blank standing for the
+            # electrodes nobody has asked about.
+            chosen = {"" if value == QC_NONE else value for value in wanted_qc}
+            mask &= df[QC_STATUS_COLUMN].astype(str).str.strip().isin(chosen)
+
+        failures = self.filter_bar.values(FILTER_FAILURE)
+        if failures and FAILURE_COLUMN in df.columns:
+            # Either, not both: ticking two reasons asks for the electrodes
+            # that gave one OR the other, the same as every other dropdown
+            # here. An electrode with both is in either answer.
+            codes = df[FAILURE_COLUMN].astype(str).str.strip()
+            wanted = pd.Series(False, index=df.index)
+            for label in failures:
+                code = FAILURE_FILTER_CODES.get(label)
+                if code:
+                    wanted |= codes.str.split(",").apply(lambda got: code in got)
+                elif label == FAILURE_NONE and STATUS_COLUMN in df.columns:
+                    # Failed on a rig, and nobody wrote down what went wrong.
+                    wanted |= ((codes == "")
+                               & (df[STATUS_COLUMN].astype(str).str.strip()
+                                  == str(ElectrodeStatus.TESTED_AND_SCRAPPED)))
+            mask &= wanted
+
         types = self.filter_bar.values(FILTER_TYPE)
         type_column = str(ElectrodeColumns.FULL_NAME)
         if types and type_column in df.columns:
@@ -892,6 +1005,7 @@ class ElectrodesWidget(QWidget):
         except Exception as e:
             print(f"Error loading electrodes table: {e}")
         self._place_status_delegate()
+        self._place_qc_delegate()
         self._place_vat_delegate()
         self._sync_picked_row()
         self._sync_ongoing_timer()
@@ -1176,12 +1290,16 @@ class ElectrodesWidget(QWidget):
             self.load_data(dataframe)
             return
 
-        # A board move changes the test-first flags, the lock owner and when
-        # the status settled as well as the status itself, so all four are
-        # diffed and adopted together. Leaving one out kept a stale cell: the
-        # backend recomputed it and the patch threw the new value away.
+        # A board move changes the test-first flags, the lock owner, when the
+        # status settled, why it failed and whether it has been requested, as
+        # well as the status itself, so all of them are diffed and adopted
+        # together. Leaving one out keeps a stale cell: the backend recomputes
+        # it and the patch throws the new value away. That has now happened
+        # twice, with the finalised date and then with the QC request, so the
+        # rule is that every derived column belongs in this list.
         tracked = [c for c in (STATUS_COLUMN, PRIORITY_COLUMN, LOCKED_BY_COLUMN,
-                               FINALISED_COLUMN)
+                               FINALISED_COLUMN, FAILURE_COLUMN,
+                               QC_STATUS_COLUMN)
                    if c in dataframe.columns and c in self.df_source.columns]
         differs = None
         for column in tracked:
@@ -1259,6 +1377,84 @@ class ElectrodesWidget(QWidget):
         self._status_column = found
         if found is not None:
             self.table.setItemDelegateForColumn(found, self._pill_delegate)
+
+    def _qc_action_clicked(self, row: int, column: int) -> bool:
+        """Handle a click in the QC request column. True if it was one of ours.
+
+        Worked out from where the click landed rather than from a widget per
+        row: there are thirteen thousand rows and three buttons on screen.
+        """
+        if column != self._qc_column or self.df_visible is None:
+            return False
+        if not 0 <= row < len(self.df_visible):
+            return False
+        item = self.table.item(row, column)
+        text = item.text() if item is not None else ""
+        where = self.table.visualItemRect(item) if item is not None else None
+        if where is None:
+            return False
+        point = self.table.viewport().mapFromGlobal(QCursor.pos())
+        action = self._qc_delegate.action_at(QRectF(where), QPointF(point), text)
+        if not action:
+            return False
+
+        marking = str(self.df_visible.iloc[row][str(ElectrodeColumns.MARKING)]).strip()
+        if action == RequestActionDelegate.REQUEST:
+            self._ask_for_qc(marking)
+        else:
+            self._answer_offer(marking,
+                               action == RequestActionDelegate.APPROVE)
+        return True
+
+    def _ask_for_qc(self, marking: str) -> None:
+        """Ask production to send one electrode, after confirming."""
+        if self._on_qc_request is None:
+            return
+        if not ask(self, "QC request", f"Request {marking} for QC?",
+                   confirm_text="Request"):
+            return
+        if not self._on_qc_request(marking):
+            self._say_it_failed(marking)
+
+    def _answer_offer(self, marking: str, approve: bool) -> None:
+        """Accept or turn down an electrode production offered."""
+        if self._on_qc_answer is None:
+            return
+        what = "Accept" if approve else "Turn down"
+        if not ask(self, "QC request", f"{what} {marking}?",
+                   confirm_text=what, danger=not approve):
+            return
+        if not self._on_qc_answer(marking, approve):
+            self._say_it_failed(marking)
+
+    def _say_it_failed(self, marking: str) -> None:
+        """Nothing changed, and saying nothing would read as it having worked.
+
+        The usual cause is somebody else getting there first: one row per
+        electrode, ever, so a request raised on another machine a moment ago
+        means this one does nothing.
+        """
+        WarningDialog(self, title="QC request",
+                      message=f"Nothing changed for {marking}. Somebody may "
+                              f"have got there first.",
+                      icon="!", header_color="#B45309").exec()
+
+    def _place_qc_delegate(self) -> None:
+        """Put the request badge on whichever column the QC request ended up in.
+
+        Same reasoning as the status one: the Vat column comes and goes, so
+        the index is not fixed.
+        """
+        if self.table is None:
+            return
+        found = self._column_of(COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN])
+        if found == self._qc_column:
+            return
+        if self._qc_column is not None:
+            self.table.setItemDelegateForColumn(self._qc_column, None)
+        self._qc_column = found
+        if found is not None:
+            self.table.setItemDelegateForColumn(found, self._qc_delegate)
 
     def _column_of(self, header: str) -> int | None:
         """The column carrying this header, or None when it is not shown."""
@@ -1371,6 +1567,13 @@ class ElectrodesWidget(QWidget):
         return format_utc_timestamp_for_display(
             self.df_visible.iloc[row_index][FINALISED_COLUMN])
 
+    def _qc_display(self, row_index: int) -> str:
+        """The QC request cell's text, which the frame already holds as a label."""
+        if (self.df_visible is None or row_index >= len(self.df_visible)
+                or QC_STATUS_COLUMN not in self.df_visible.columns):
+            return ""
+        return str(self.df_visible.iloc[row_index][QC_STATUS_COLUMN])
+
     def _repaint_row(self, row_index: int) -> None:
         """Rewrite one rendered row's status text and tint, in place."""
         if self.table is None or row_index >= self.table.rowCount():
@@ -1379,7 +1582,8 @@ class ElectrodesWidget(QWidget):
         # the finalise time too, and repainting the status alone left that
         # showing until the next full reload.
         rewrite = {COLUMN_DISPLAY_NAMES[STATUS_COLUMN]: self._status_display,
-                   COLUMN_DISPLAY_NAMES[FINALISED_COLUMN]: self._finalised_display}
+                   COLUMN_DISPLAY_NAMES[FINALISED_COLUMN]: self._finalised_display,
+                   COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]: self._qc_display}
         for column in range(self.table.columnCount()):
             item = self.table.item(row_index, column)
             if item is None:
@@ -1635,7 +1839,14 @@ class ElectrodesWidget(QWidget):
         self.edit_status_button.raise_()
 
     def _on_cell_clicked(self, row: int, _column: int) -> None:
-        """Pick the row, or let it go if it was already picked."""
+        """Act on a QC request button, or pick the row.
+
+        A click on one of the buttons is not also a row selection: the
+        operator pressed a button, and having the row jump underneath the
+        confirmation box reads as two things happening.
+        """
+        if self._qc_action_clicked(row, _column):
+            return
         if self.df_visible is None or row >= len(self.df_visible):
             return
         marking = str(self.df_visible.iloc[row][str(ElectrodeColumns.MARKING)]).strip()
@@ -1660,6 +1871,19 @@ class ElectrodesWidget(QWidget):
             self.df_visible[column].astype(str).str.strip() == self._picked_marking]
         if len(rows):
             self._row_highlight.picked_row = int(rows[0])
+
+    def _failure_badges(self, row_index: int) -> tuple:
+        """Why the electrode on this row failed, for the badges beside its pill.
+
+        Read off the rendered frame by row, the way the lock is: the delegate
+        is handed a row number and the frame is what the row was built from.
+        """
+        if (self.df_visible is None or row_index < 0
+                or row_index >= len(self.df_visible)
+                or FAILURE_COLUMN not in self.df_visible.columns):
+            return ()
+        codes = str(self.df_visible.iloc[row_index][FAILURE_COLUMN]).strip()
+        return tuple(code for code in codes.split(",") if code)
 
     def _locked_by(self, row_index: int) -> str:
         """The live decision driving this row's status, or '' if none does."""

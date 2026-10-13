@@ -61,6 +61,13 @@ PRIORITY_FLAG = "Test first"
 # or set by hand here. Empty while it is still on the board, since a card that
 # can be dragged has not settled anything yet.
 FINALISED_COLUMN = "Status finalised"
+# Why a tested electrode failed, as a comma separated list of the two codes
+# below, empty where nothing was written down. Never shown as a column of its
+# own: the Status cell draws a badge per code beside the verdict, which is
+# where somebody reading "Tested, failed" is already looking.
+FAILURE_COLUMN = "Failure"
+FAILED_IC = "ic"
+FAILED_CRACK = "crack"
 
 
 def status_family(status: str) -> str:
