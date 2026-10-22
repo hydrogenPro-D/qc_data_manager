@@ -258,7 +258,10 @@ class ConfirmDialog(QDialog):
     def __init__(self, parent=None, title: str = "Confirm",
                  question: str = "", confirm_text: str = "Yes",
                  icon: str = "?", header_color: str = "#14B8A6",
-                 danger: bool = False) -> None:
+                 danger: bool = False, extra: QWidget | None = None) -> None:
+        """``extra`` is a widget placed under the question, for a confirmation
+        that also has to ask something: the coupons a request wants, say. The
+        caller keeps the widget and reads it after exec()."""
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(420)
@@ -293,6 +296,8 @@ class ConfirmDialog(QDialog):
         body.setContentsMargins(24, 22, 24, 20)
         body.setSpacing(18)
         body.addWidget(prompt, 1)
+        if extra is not None:
+            body.addWidget(extra, 0)
         body.addLayout(buttons)
 
         layout = QVBoxLayout()

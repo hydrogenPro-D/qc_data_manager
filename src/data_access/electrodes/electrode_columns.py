@@ -139,6 +139,14 @@ DECIDED = frozenset({
 })
 
 
+# Nothing left to ask production for. Either the electrode is decided, so
+# there is no question to put, or it is on a rig this minute, so QC already has
+# it. The QC request column goes quiet on these rows: no button, and no badge
+# either, except Sent, which records where the electrode went rather than
+# asking anything.
+NOTHING_LEFT_TO_ASK = DECIDED | frozenset({ElectrodeStatus.TEST_ONGOING})
+
+
 # Worked out on every render and never written: the database's
 # electrode_status_kind does not hold them, and none may be set by hand.
 NEVER_STORED = frozenset({

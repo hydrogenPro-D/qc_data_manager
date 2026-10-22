@@ -22,32 +22,51 @@ SCHEMA = "qc_requests"
 
 def load_requests(session) -> dict[str, str]:
     """``{electrode: state}``, empty where nothing has been asked for."""
+    return {electrode: detail["state"]
+            for electrode, detail in load_request_details(session).items()}
+
+
+def load_request_details(session) -> dict[str, dict]:
+    """``{electrode: {state, requested, coupons}}`` for every request.
+
+    One read for everything a request says about itself, rather than one per
+    column as the screen grows: the state, when it was asked for, and what it
+    wants cut. SELECT * because the coupons column only exists after 008 and a
+    named list would fail on a database that has not had it.
+    """
     try:
-        rows = session.rows(
-            f"SELECT [electrode], [state] FROM [{SCHEMA}].[vw_qc_request]")
+        rows = session.rows(f"SELECT * FROM [{SCHEMA}].[vw_qc_request]")
     except Exception as e:
         print(f"Could not read the QC requests: {e}")
         return {}
 
-    requests: dict[str, str] = {}
+    requests: dict[str, dict] = {}
     for row in rows:
         electrode = str(row.get("electrode") or "").strip()
         state = str(row.get("state") or "").strip()
         if electrode and state:
-            requests[electrode] = state
+            requests[electrode] = {
+                "state": state,
+                "requested": str(row.get("created_at_utc") or ""),
+                # Absent before 008, which reads as nothing recorded.
+                "coupons": str(row.get("coupons") or ""),
+            }
     return requests
 
 
-def raise_request(session, electrode: str, kind: str) -> bool:
+def raise_request(session, electrode: str, kind: str,
+                  coupons: str = "") -> bool:
     """Ask production for one electrode. False when nothing was written.
 
-    False rather than an exception, and it covers two cases the caller treats
-    the same way: the database refused, and the electrode already has a
-    request. One row per electrode ever, so asking twice is not an error, it
-    simply does not happen.
+    False rather than an exception, and it covers three cases the caller treats
+    the same way: the database refused, the electrode already has a request,
+    and the coupons asked for are none. One row per electrode ever, so asking
+    twice is not an error, it simply does not happen; and asking for an
+    electrode nobody will cut anything from is not a request at all.
     """
     return _changed(session, "usp_request_raise",
-                    electrode=str(electrode).strip(), kind=str(kind))
+                    electrode=str(electrode).strip(), kind=str(kind),
+                    coupons=str(coupons))
 
 
 def approve(session, electrode: str, expected_state: str) -> bool:
@@ -62,6 +81,17 @@ def decline(session, electrode: str, expected_state: str) -> bool:
     return _changed(session, "usp_request_qc_decline",
                     electrode=str(electrode).strip(),
                     expected_state=str(expected_state))
+
+
+def arrived_at_qc(session, electrode: str) -> bool:
+    """Close an open request because the electrode turned up on the QC board.
+
+    Safe to call after every card: an electrode with no request, or one
+    already finished with, changes nothing and reports False. See
+    sql/qc_requests/012 for why this is not usp_request_mark_sent.
+    """
+    return _changed(session, "usp_request_arrived_at_qc",
+                    electrode=str(electrode).strip())
 
 
 def raise_due_requests(session) -> int:

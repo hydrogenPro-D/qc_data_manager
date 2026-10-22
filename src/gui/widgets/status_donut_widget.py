@@ -62,15 +62,22 @@ _PLACEHOLDER = "#E3E7EB"
 
 
 def draw_donut(ax, counts: dict[str, int], colors: dict[str, str],
-               unit_label: str = "total", *, pct_fontsize: int = 13,
-               total_fontsize: int = 30, caption_fontsize: int = 13) -> int:
+               unit_label: str = "total", *, pct_fontsize: float = 13,
+               total_fontsize: float = 30, caption_fontsize: float = 13) -> int:
     """Draw the ring onto a matplotlib axes; returns the total.
 
     Shared by the on-screen chart and the printed report so the two can't drift
-    apart — only the type sizes differ.
+    apart — only the type sizes differ. The sizes asked for are the sizes at
+    full radius; the whole drawing is then scaled by _RADIUS together.
     """
     present = [(name, value) for name, value in counts.items() if value > 0]
     total = sum(value for _, value in present)
+    # EVERYTHING SCALES, not just the ring. The total already filled the hole,
+    # so shrinking the ring under type that stayed put had the number sitting
+    # across the band. The callers' sizes are the sizes at full radius.
+    pct_fontsize *= _RADIUS
+    total_fontsize *= _RADIUS
+    caption_fontsize *= _RADIUS
 
     ax.clear()
     ax.set_aspect("equal")
@@ -94,11 +101,15 @@ def draw_donut(ax, counts: dict[str, int], colors: dict[str, str],
         startangle=90,
         counterclock=False,
         autopct=label,
-        # Centred in the band: it runs from 0.62 to 1.0, so 0.81 is its middle.
+        radius=_RADIUS,
+        # A fraction of the radius, so it stays in the band whatever that is:
+        # the band runs from 0.62 to 1.0, and 0.81 is its middle.
         pctdistance=0.81,
         textprops={"fontsize": pct_fontsize, "fontweight": "bold"},
         # Thin ring, with a surface-coloured gap so adjacent slices separate.
-        wedgeprops={"width": _RING_WIDTH, "edgecolor": "#FFFFFF", "linewidth": 2},
+        # Scaled with the radius, or a smaller ring would be a fatter one.
+        wedgeprops={"width": _RING_WIDTH * _RADIUS, "edgecolor": "#FFFFFF",
+                    "linewidth": 2},
     )
     # Per slice, not one colour for the lot, and haloed in its own fill so a
     # label wider than the band is still readable where it crosses the edge.
@@ -108,9 +119,12 @@ def draw_donut(ax, counts: dict[str, int], colors: dict[str, str],
         text.set_color(ink_on(fill))
         text.set_path_effects([
             path_effects.withStroke(linewidth=2.4, foreground=fill)])
-    ax.text(0, 0.09, f"{round(total):,}".replace(",", " "), ha="center", va="center",
+    # Offsets in the same units as the radius, so the pair sits the same way
+    # in the hole whatever size the hole is.
+    ax.text(0, 0.09 * _RADIUS, f"{round(total):,}".replace(",", " "),
+            ha="center", va="center",
             color=_TEXT, fontsize=total_fontsize, fontweight="bold")
-    ax.text(0, -0.17, unit_label, ha="center", va="center",
+    ax.text(0, -0.17 * _RADIUS, unit_label, ha="center", va="center",
             color=_MUTED, fontsize=caption_fontsize)
     return total
 
@@ -136,6 +150,12 @@ def render_donut_png(counts: dict[str, int], colors: dict[str, str],
 # The ring's thickness as a fraction of its radius, matching the wedges the
 # chart draws, so the placeholder and the real thing are the same shape.
 _RING_WIDTH = 0.38
+# The ring, as a fraction of the room it is given. Short of 1 so it is not
+# the heaviest thing in the panel: the number in the middle is what gets
+# read, and the ring around it was crowding the card's edge. Everything that
+# draws a ring scales by this, including the placeholder, or the chart jumps
+# a size the moment it loads.
+_RADIUS = 0.9
 
 
 def _new_figure(diameter: int, dpi: int = 100):
@@ -198,7 +218,7 @@ class _RingPlaceholder(QWidget):
             painter.setPen(QPen(QColor(_MUTED)))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No data")
         elif self.mode == "loading":
-            radius = min(self.width(), self.height()) / 2
+            radius = min(self.width(), self.height()) / 2 * _RADIUS
             thickness = radius * _RING_WIDTH
             pen = QPen(QColor(_PLACEHOLDER))
             pen.setWidthF(thickness)
@@ -337,8 +357,9 @@ class StatusDonutWidget(QWidget):
             self._ax.set_aspect("equal")
             self._ax.axis("off")
             self._ax.pie([1], colors=[_PLACEHOLDER], startangle=90,
-                         wedgeprops={"width": _RING_WIDTH, "edgecolor": "#FFFFFF",
-                                     "linewidth": 2})
+                         radius=_RADIUS,
+                         wedgeprops={"width": _RING_WIDTH * _RADIUS,
+                                     "edgecolor": "#FFFFFF", "linewidth": 2})
             self._canvas.draw_idle()
 
     def update_data(self, counts: dict[str, int], colors: dict[str, str]) -> None:

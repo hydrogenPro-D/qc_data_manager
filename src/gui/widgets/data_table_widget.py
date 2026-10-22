@@ -171,6 +171,14 @@ class DataTableWidget(QTableWidget):
         self.max_column_width = max_column_width
         # Header names exempt from the max-width cap (sized to full content).
         self.uncapped_columns: set[str] = set()
+        # Columns that keep their content width rather than taking a share of
+        # the spare, see set_no_growth_columns.
+        self.no_growth_columns: set[str] = set()
+        # Whether the spare goes to the last column alone, see
+        # set_fill_last_only.
+        self._fill_last_only = False
+        # Whether columns give up width to stay on screen, see set_shrink_to_fit.
+        self._shrink_to_fit = False
         # Whether load_data auto-resizes columns. Tabs that resize explicitly
         # afterwards turn this off to skip a redundant O(rows×cols) pass.
         self._resize_on_load = True
@@ -573,25 +581,124 @@ class DataTableWidget(QTableWidget):
         if self.columnCount():
             self.fill_remaining_width()
 
+    def set_shrink_to_fit(self, enabled: bool = True) -> None:
+        """Squeeze the widest columns until the table fits, rather than scroll.
+
+        Content sizing gives every column what it asks for, which on a small
+        screen is more than there is: the last columns then sit off the right
+        edge and an operator has to scroll sideways to find out whether an
+        electrode has been requested. Taking the shortfall off the widest
+        columns, which are the ones holding a long badge that elides cleanly,
+        keeps every column on screen at the cost of a few truncated words.
+        """
+        self._shrink_to_fit = enabled
+        if self.columnCount():
+            self.shrink_columns_to_fit()
+
+    def _column_needs(self, col: int) -> int:
+        """What the cells and the heading of one column actually take."""
+        return max(self.sizeHintForColumn(col),
+                   self.horizontalHeader().sectionSizeHint(col))
+
+    def shrink_columns_to_fit(self) -> None:
+        """Give up width until the table fits, cheapest pixels first.
+
+        Two passes, because they cost different things. First the slack above a
+        column's own content, which costs nothing at all to lose. Only if that
+        is not enough does it start cutting into content, and then off the
+        widest each time, so the long badges give way before the short ones and
+        no column is flattened while another keeps room it is not using.
+        """
+        if not self._shrink_to_fit or self.columnCount() == 0:
+            return
+        widths = [self.columnWidth(col) for col in range(self.columnCount())]
+        over = sum(widths) - self.viewport().width()
+        if over <= 0:
+            return
+        floor = self.min_column_width or 40
+
+        for col, width in enumerate(widths):
+            if over <= 0:
+                break
+            spare = width - max(self._column_needs(col), floor)
+            if spare > 0:
+                take = min(spare, over)
+                widths[col] -= take
+                over -= take
+
+        while over > 0:
+            widest = max(range(len(widths)), key=lambda col: widths[col])
+            if widths[widest] <= floor:
+                break
+            take = min(over, widths[widest] - floor, 8)
+            widths[widest] -= take
+            over -= take
+
+        for col, width in enumerate(widths):
+            self.setColumnWidth(col, width)
+
+    def set_fill_last_only(self, enabled: bool = True) -> None:
+        """Hand every spare pixel to the last column instead of sharing them.
+
+        Sharing in proportion suits a table whose columns all hold free text.
+        It suits one with a Vat and a Recipes column badly: a three character
+        column grew with the rest and ended up mostly empty, and on a small
+        screen that waste is what pushes the last column off the edge. With
+        this, every column keeps its content width and the one at the end takes
+        whatever the window happens to have spare.
+        """
+        self._fill_last_only = enabled
+        if self.columnCount():
+            self.fill_remaining_width()
+
+    def set_no_growth_columns(self, names) -> None:
+        """Columns that keep their content width when spare space is shared.
+
+        Spare width goes out in proportion to what a column already has, so the
+        widest column grows the most. That is right for one holding free text
+        and wrong for one holding a fixed shape: a timestamp is the same twelve
+        characters on every row, and growing it only takes room from a column
+        that could have used it.
+        """
+        self.no_growth_columns = {str(name) for name in (names or ())}
+        if self.columnCount():
+            self.fill_remaining_width()
+
+    def _header_text(self, col: int) -> str:
+        header = self.horizontalHeaderItem(col)
+        return header.text() if header is not None else ""
+
     def fill_remaining_width(self) -> None:
-        """Grow every column proportionally until the pane is full."""
+        """Grow the columns that may grow, proportionally, until the pane is full."""
         if not self._fill_remaining or self.columnCount() == 0:
             return
         widths = [self.columnWidth(col) for col in range(self.columnCount())]
-        total = sum(widths)
-        spare = self.viewport().width() - total
-        if total <= 0 or spare <= 0:
+        spare = self.viewport().width() - sum(widths)
+        if spare <= 0:
+            return
+        growable = [col for col in range(self.columnCount())
+                    if self._header_text(col) not in self.no_growth_columns]
+        if not growable:
+            return
+        # All of it to the last one, for a table of mostly fixed-shape columns.
+        if self._fill_last_only:
+            last = growable[-1]
+            self.setColumnWidth(last, widths[last] + spare)
+            return
+        total = sum(widths[col] for col in growable)
+        if total <= 0:
             return
 
         # Proportional, so a wide column grows more than a narrow one and the
         # relative shape of the table is preserved.
         handed_out = 0
-        for col, width in enumerate(widths[:-1]):
-            share = int(spare * width / total)
+        for col in growable[:-1]:
+            share = int(spare * widths[col] / total)
             handed_out += share
-            self.setColumnWidth(col, width + share)
-        # Rounding leftovers go to the last column, so the fit is exact.
-        self.setColumnWidth(len(widths) - 1, widths[-1] + spare - handed_out)
+            self.setColumnWidth(col, widths[col] + share)
+        # Rounding leftovers go to the last growable column, so the fit is exact.
+        last = growable[-1]
+        self.setColumnWidth(last, widths[last] + spare - handed_out)
 
     def _resize_columns(self, num_columns: int) -> None:
         """Resize columns to fit content with min/max constraints."""
@@ -612,3 +719,5 @@ class DataTableWidget(QTableWidget):
                 self.setColumnWidth(col, self.max_column_width)
 
         self.fill_remaining_width()
+        # Last, because it only acts on what the two above have settled on.
+        self.shrink_columns_to_fit()

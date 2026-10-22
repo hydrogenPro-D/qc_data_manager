@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QStackedWidget, QComboBox,
 )
 
+from ..styles.button_styles import QUIET_BUTTON_STYLE
 from .no_scroll_inputs import NoScrollComboBox, NoScrollDateEdit
 from .table_delegates import TickDelegate
 
@@ -174,20 +175,8 @@ _SEARCH_STYLE = """
 
 _LABEL_STYLE = "color: #6B6B6B; font-size: 12px; font-weight: 600;"
 
-_CLEAR_BUTTON_STYLE = """
-    QPushButton {
-        background-color: #FFFFFF;
-        border: 1px solid #D1D5DB;
-        border-radius: 5px;
-        padding: 5px 14px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-        font-size: 12px;
-        font-weight: 600;
-        color: #6B7280;
-    }
-    QPushButton:hover { border: 1px solid #55BDBD; color: #14B8A6; }
-    QPushButton:pressed { background-color: #F0FAFA; }
-"""
+# The shared quiet button, which this one is the original of.
+_CLEAR_BUTTON_STYLE = QUIET_BUTTON_STYLE
 
 # The search box reserves room for a phrase; a marking is six characters, and
 # the search box's min-width would otherwise decide the range fields' minimum

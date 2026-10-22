@@ -61,5 +61,9 @@
       "from": 13900,
       "to": "newest"
     }
+  },
+  "qc_requests": {
+    "_request_window_days": "How far back QC may ask production for an electrode. Production Data Manager lists the last 30 days of finished electrodes, so an older one has no row there to answer on. Their number: keep it in step with @window_days in sql/qc_requests/011.",
+    "request_window_days": 30
   }
 }

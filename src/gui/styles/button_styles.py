@@ -176,6 +176,26 @@ QPushButton:disabled {
 """
 
 
+# A button that sits among inputs rather than at the end of a form: white, a
+# hairline border, grey text that turns teal under the cursor. "Clear all
+# filters" is the original, and it lives here rather than in that widget so a
+# second one somewhere else is the same button and not a near miss.
+QUIET_BUTTON_STYLE = """
+    QPushButton {
+        background-color: #FFFFFF;
+        border: 1px solid #D1D5DB;
+        border-radius: 5px;
+        padding: 5px 14px;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 12px;
+        font-weight: 600;
+        color: #6B7280;
+    }
+    QPushButton:hover { border: 1px solid #55BDBD; color: #14B8A6; }
+    QPushButton:pressed { background-color: #F0FAFA; }
+"""
+
+
 def apply_modern_shadow(widget,
                         blur=18,
                         x_offset=0,

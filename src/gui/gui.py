@@ -8,6 +8,7 @@ here, which is what keeps them testable with fakes.
 """
 
 import sys
+from collections import deque
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -164,6 +165,9 @@ class MainWindow(QMainWindow):
             on_status_override=self._on_status_override,
             on_qc_request=self._on_qc_request,
             on_qc_answer=self._on_qc_answer,
+            get_coupon_settings=self.backend.get_coupon_settings,
+            on_coupon_setting=self._on_coupon_setting,
+            get_request_window_days=app_config.qc_request_window_days,
         )
         # Read after the window is up, not before it. The 12k rows and their
         # status propagation are about 700ms, and nothing about opening the
@@ -293,9 +297,16 @@ class MainWindow(QMainWindow):
         self._background_worker.moveToThread(self._poll_thread)
         self.background_requested.connect(self._background_worker.run)
         self._background_worker.finished.connect(self._on_background_finished)
-        # What to call with the answer. One at a time: the only caller is a
-        # modal dialog, which cannot ask twice.
-        self._background_done = None
+        # What to call with each answer, in the order the jobs were sent.
+        #
+        # A QUEUE, NOT ONE SLOT. It was one slot while the only caller was a
+        # modal dialog, which cannot ask twice. The sampling sweep is a second
+        # caller now and it fires on a timer, so a save started while a sweep
+        # was still running handed the save's callback the sweep's row count
+        # and dropped the frames it was waiting for. The worker runs one job at
+        # a time and reports them in order, so a queue keeps each answer with
+        # the caller that asked for it.
+        self._background_done: deque = deque()
         # Which tabs are still showing a placeholder, so the poll timer does
         # not ask about a table that has not had its first read.
         self._awaiting = {"electrodes", "sem_edx"}
@@ -335,16 +346,26 @@ class MainWindow(QMainWindow):
         self._raise_due_requests()
 
     def _raise_due_requests(self) -> None:
-        """Ask the database to raise whatever the sampling rule now says is due.
+        """Raise whatever the two automatic rules now say is outstanding.
 
-        Off the UI thread: it reads the electrode list and the process log to
-        work out what is due, which is not work to do between two paints.
-        Nothing is rendered from the answer, the requests arrive on the next
-        poll like any other change, so a failure here costs one sweep.
+        The sampling rule, and the catch-up for electrodes a failure says to
+        test next that nobody has asked production for. The second exists
+        because those are requested at the instant a failure is finalised and
+        at no other time, so a flag that predates the requests, or one raised
+        while the schema was out of reach, would wait for ever.
+
+        Off the UI thread: the first reads the electrode list and the process
+        log, which is not work to do between two paints. Nothing is rendered
+        from the answer, the requests arrive on the next poll like any other
+        change, so a failure here costs one sweep.
         """
         if getattr(self, "backend", None) is None:
             return
-        self.background_requested.emit(self.backend.raise_due_qc_requests)
+        # Nothing to call back: the requests arrive on the next poll like any
+        # other change. The place in the queue is still taken, so the answer
+        # cannot be handed to somebody else's callback.
+        self._background_done.append(None)
+        self.background_requested.emit(self.backend.raise_outstanding_requests)
 
     def _warn_if_not_production(self) -> None:
         """Say so, in the tab bar's corner, when this is not the real database.
@@ -452,19 +473,40 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Setting the status of {marking} failed: {e}")
 
-    def _on_qc_request(self, marking: str) -> bool:
+    def _on_qc_request(self, marking: str, coupons: str = "") -> bool:
         """Ask production for one electrode, then show it as asked for."""
         return self._after_qc_write(
-            lambda: self.backend.raise_qc_request(marking, KIND_MANUAL),
+            lambda: self.backend.raise_qc_request(marking, KIND_MANUAL,
+                                                  coupons),
             marking)
 
-    def _on_qc_answer(self, marking: str, approve: bool) -> bool:
-        """Answer an electrode production offered."""
+    def _on_qc_answer(self, marking: str, approve: bool,
+                      coupons: str = "") -> bool:
+        """Answer an electrode production offered.
+
+        Accepting records what QC wants cut as well as the answer itself. The
+        coupons are written first: if the approve then fails, nothing has moved
+        that an operator can see, whereas the other order would leave a request
+        asking for coupons nobody agreed to.
+        """
         state = AWAITING_QC
-        return self._after_qc_write(
-            lambda: (self.backend.approve_qc_request(marking, state) if approve
-                     else self.backend.decline_qc_request(marking, state)),
-            marking)
+
+        def write() -> bool:
+            if approve:
+                if coupons:
+                    self.backend.set_request_coupons(marking, coupons)
+                return self.backend.approve_qc_request(marking, state)
+            return self.backend.decline_qc_request(marking, state)
+
+        return self._after_qc_write(write, marking)
+
+    def _on_coupon_setting(self, reason: str, coupons: str) -> bool:
+        """Record one coupon setting. The tab rebuilds from it afterwards."""
+        try:
+            return bool(self.backend.set_coupon_setting(reason, coupons))
+        except Exception as e:
+            print(f"Could not save the coupon setting: {e}")
+            return False
 
     def _after_qc_write(self, write, marking: str) -> bool:
         """Run one request write and repaint from what the database now says.
@@ -513,7 +555,7 @@ class MainWindow(QMainWindow):
 
     def _on_background_finished(self, result, error) -> None:
         """Hand a background answer to whoever asked. Back on the UI thread."""
-        done, self._background_done = self._background_done, None
+        done = self._background_done.popleft() if self._background_done else None
         if callable(done):
             done(result, error)
 
@@ -543,7 +585,7 @@ class MainWindow(QMainWindow):
                 self.sem_edx_widget.apply_saved(generation, frames)
             done(error is None, error)
 
-        self._background_done = rendered
+        self._background_done.append(rendered)
         self.background_requested.emit(work)
 
     def _on_sem_edx_changed(self, generation: str = "") -> None:

@@ -51,6 +51,22 @@ def production_database(default: str = "") -> str:
     return str(load_config().get("database", {}).get("production", default)).strip()
 
 
+def qc_request_window_days(default: int = 30) -> int:
+    """How far back QC may ask production for an electrode.
+
+    Production Data Manager lists the last 30 days of finished electrodes, so
+    an older one has no row there for anybody to answer on, and the request
+    would be expired by the database within the minute. 0 or less turns the
+    limit off, which is how a database with no expiry rule behaves.
+    """
+    value = load_config().get("qc_requests", {}).get("request_window_days",
+                                                     default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def sem_edx_layout(generation: str = "") -> dict:
     """Which quantities each SEM sheet shows, and in what order.
 
