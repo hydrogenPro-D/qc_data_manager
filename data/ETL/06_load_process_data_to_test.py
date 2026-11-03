@@ -19,6 +19,10 @@ REPLACES WHAT IS THERE. A half loaded copy is worse than none, so an existing
 table is emptied first, in the same transaction as the load: either the whole
 copy lands or nothing changes.
 
+INDEXES THE COPY to match dataloggingDev, since --recreate drops the table and
+takes them with it. Without them every join on Marking scans 361k rows and the
+QC sampling rule is slower on Test than it will ever be in production.
+
 The login is asked for at the keyboard and stored nowhere. It needs CREATE
 TABLE and INSERT on the target.
 
@@ -54,6 +58,22 @@ ALLOWED_TARGETS = {"dataloggingTest"}
 AWKWARD = {"DATETIMEOFFSET", "DATETIME2", "DATETIME", "SMALLDATETIME"}
 
 BATCH = 1000
+
+# What dataloggingDev and production have on this table, in the order they must
+# be created: the clustered key first, or the other two are rebuilt when it
+# arrives. The same three as sql/maintenance/match_test_process_data_indexes.sql,
+# which is the by-hand version for a Test database loaded before this existed.
+INDEXES = (
+    ("PK_ProcessData",
+     "ALTER TABLE [{schema}].[{table}] "
+     "ADD CONSTRAINT [PK_ProcessData] PRIMARY KEY CLUSTERED ([Id]);"),
+    ("IX_ProcessData_Marking",
+     "CREATE NONCLUSTERED INDEX [IX_ProcessData_Marking] "
+     "ON [{schema}].[{table}] ([Marking]);"),
+    ("IX_ProcessData_Vat",
+     "CREATE NONCLUSTERED INDEX [IX_ProcessData_Vat] "
+     "ON [{schema}].[{table}] ([Proces], [Marking]);"),
+)
 
 
 def server_settings() -> dict:
@@ -133,18 +153,71 @@ def create_statement(definition: dict) -> str:
             f"(\n{body}\n);")
 
 
-def placeholders(definition: dict) -> str:
+def ensure_indexes(cursor, schema: str, table: str) -> list:
+    """Create whichever of Dev's indexes this copy is missing, and name them.
+
+    After the rows, not before: inserting 361k rows through three indexes is
+    slower than building them over a filled table.
+    """
+    made = []
+    for name, statement in INDEXES:
+        if cursor.execute("SELECT 1 FROM sys.indexes "
+                          "WHERE object_id = OBJECT_ID(?) AND name = ?",
+                          f"[{schema}].[{table}]", name).fetchval():
+            continue
+        cursor.execute(statement.format(schema=schema, table=table))
+        made.append(name)
+    return made
+
+
+def placeholders(columns: list) -> str:
     """One placeholder per column, converting the text back where needed."""
     return ", ".join(
         "CONVERT(DATETIMEOFFSET, ?, 126)"
         if str(c["type"]).upper() == "DATETIMEOFFSET" else "?"
-        for c in definition["columns"])
+        for c in columns)
 
 
-def read_rows(definition: dict) -> list[tuple]:
+def target_columns(cursor, schema: str, table: str) -> dict:
+    """``{column: whether it allows NULL}`` on the target, empty if no table."""
+    cursor.execute(
+        "SELECT COLUMN_NAME, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+        " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?", (schema, table))
+    return {row[0]: str(row[1]).upper() == "YES" for row in cursor.fetchall()}
+
+
+def loadable(definition: dict, target: dict) -> list:
+    """The columns to load, which is what both sides have.
+
+    THE TABLE ON TEST IS NOT ALWAYS WHAT THIS EXPORT HOLDS. A table left behind
+    by an earlier full export has every column Dev has, several of them NOT
+    NULL, and a --vat-only export has two. Loading it verbatim fails on the
+    first row with a NULL in a column that does not allow one.
+
+    Refused when the target needs something this export has not got, with the
+    fix named, rather than failing halfway through.
+    """
+    shared = [c for c in definition["columns"] if c["name"] in target]
+    if not shared:
+        raise SystemExit("The table on the target has none of the exported "
+                         "columns. It is not the same table. Nothing was loaded.")
+
+    have = {c["name"] for c in shared}
+    required = [name for name, nullable in target.items()
+                if not nullable and name not in have]
+    if required:
+        raise SystemExit(
+            f"The table on the target declares {', '.join(required)} NOT NULL, "
+            f"and this export has no such column. Either re-export the whole "
+            f"table with 05 (no --vat-only), or pass --recreate to rebuild the "
+            f"table from what was exported. Nothing was loaded.")
+    return shared
+
+
+def read_rows(columns: list) -> list:
     """The CSV as rows, with empty fields back to NULL where one is allowed."""
-    names = [c["name"] for c in definition["columns"]]
-    nullable = [c.get("nullable", True) for c in definition["columns"]]
+    names = [c["name"] for c in columns]
+    nullable = [c.get("nullable", True) for c in columns]
     rows: list[tuple] = []
     with open(DATA_CSV, "r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -165,6 +238,9 @@ def main() -> int:
                         help="the target database (only dataloggingTest is allowed)")
     parser.add_argument("--dry-run", action="store_true",
                         help="say what would happen and write nothing")
+    parser.add_argument("--recreate", action="store_true",
+                        help="drop the target table and rebuild it from what "
+                             "was exported. Takes its grants with it, see 014")
     args = parser.parse_args()
 
     if args.database not in ALLOWED_TARGETS:
@@ -174,18 +250,21 @@ def main() -> int:
 
     definition = read_definition()
     schema, table = definition["schema"], definition["table"]
-    rows = read_rows(definition)
-    print(f"{DATA_CSV.name}: {len(rows):,} rows, "
+    available = len(read_rows(definition["columns"]))
+    print(f"{DATA_CSV.name}: {available:,} rows, "
           f"{len(definition['columns'])} columns".replace(",", " "))
     print(f"   exported from {definition.get('source', 'unknown')}"
           f"{', vat columns only' if definition.get('vat_only') else ''}")
     print(f"   target {args.database}.{schema}.{table}")
-    if not rows:
+    if not available:
         print("Nothing to load.")
         return 1
     if args.dry_run:
-        print("\nDry run, nothing was written. The table would be created as:\n")
+        print("\nDry run, nothing was written. A table created from scratch "
+              "would be:\n")
         print(create_statement(definition))
+        print("\nWhat goes into a table that already exists depends on the "
+              "columns it has, which needs a connection to see.")
         return 0
 
     settings = server_settings()
@@ -200,24 +279,41 @@ def main() -> int:
             raise SystemExit(f"Connected to {actual}, which is not a target "
                              f"this may write to. Nothing was loaded.")
 
-        exists = cursor.execute(
-            "SELECT OBJECT_ID(?)", f"[{schema}].[{table}]").fetchval() is not None
-        if exists:
+        # WORKED OUT BEFORE ANYTHING IS DELETED. Emptying the table and then
+        # finding the columns do not line up leaves the target empty and the
+        # operator reaching for a backup.
+        target = target_columns(cursor, schema, table)
+        if target and args.recreate:
+            print("   dropping and rebuilding the table from what was exported")
+            cursor.execute(f"DROP TABLE [{schema}].[{table}];")
+            target = {}
+
+        if target:
+            loading = loadable(definition, target)
+            skipped = [c["name"] for c in definition["columns"]
+                       if c["name"] not in target]
+            if skipped:
+                print(f"   the table here has no {', '.join(skipped)}, "
+                      f"so those are not loaded")
             before = cursor.execute(
                 f"SELECT COUNT(*) FROM [{schema}].[{table}]").fetchval()
-            print(f"   table is already there with {before:,} rows, emptying it"
+            print(f"   loading {len(loading)} of {len(definition['columns'])} "
+                  f"columns over {before:,} rows already there"
                   .replace(",", " "))
             cursor.execute(f"DELETE FROM [{schema}].[{table}];")
         else:
+            loading = definition["columns"]
             print("   creating the table")
             cursor.execute(create_statement(definition))
 
+        rows = read_rows(loading)
+
         # Bound one row at a time when a date type is involved, see AWKWARD.
-        types = {str(c["type"]).upper() for c in definition["columns"]}
+        types = {str(c["type"]).upper() for c in loading}
         cursor.fast_executemany = not (types & AWKWARD)
-        columns = ", ".join(f"[{c['name']}]" for c in definition["columns"])
+        columns = ", ".join(f"[{c['name']}]" for c in loading)
         insert = (f"INSERT INTO [{schema}].[{table}] ({columns}) "
-                  f"VALUES ({placeholders(definition)})")
+                  f"VALUES ({placeholders(loading)})")
 
         for start in range(0, len(rows), BATCH):
             cursor.executemany(insert, rows[start:start + BATCH])
@@ -226,6 +322,19 @@ def main() -> int:
 
         after = cursor.execute(f"SELECT COUNT(*) FROM [{schema}].[{table}]").fetchval()
         connection.commit()
+
+        # Indexed after the commit, so a failure here costs the indexes and not
+        # the rows that just landed.
+        try:
+            made = ensure_indexes(cursor, schema, table)
+            connection.commit()
+            if made:
+                print(f"\n   indexed: {', '.join(made)}")
+        except Exception as e:
+            connection.rollback()
+            print(f"\n   the rows are in, but indexing failed: {e}")
+            print("   run sql/maintenance/match_test_process_data_indexes.sql "
+                  "to put that right")
     except Exception as e:
         connection.rollback()
         print(f"\nRolled back, nothing was written: {e}")

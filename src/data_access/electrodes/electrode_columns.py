@@ -61,6 +61,13 @@ PRIORITY_FLAG = "Test first"
 # or set by hand here. Empty while it is still on the board, since a card that
 # can be dragged has not settled anything yet.
 FINALISED_COLUMN = "Status finalised"
+# Why a tested electrode failed, as a comma separated list of the two codes
+# below, empty where nothing was written down. Never shown as a column of its
+# own: the Status cell draws a badge per code beside the verdict, which is
+# where somebody reading "Tested, failed" is already looking.
+FAILURE_COLUMN = "Failure"
+FAILED_IC = "ic"
+FAILED_CRACK = "crack"
 
 
 def status_family(status: str) -> str:
@@ -130,6 +137,14 @@ DECIDED = frozenset({
     ElectrodeStatus.TESTED_AND_SCRAPPED,
     ElectrodeStatus.SCRAPPED,
 })
+
+
+# Nothing left to ask production for. Either the electrode is decided, so
+# there is no question to put, or it is on a rig this minute, so QC already has
+# it. The QC request column goes quiet on these rows: no button, and no badge
+# either, except Sent, which records where the electrode went rather than
+# asking anything.
+NOTHING_LEFT_TO_ASK = DECIDED | frozenset({ElectrodeStatus.TEST_ONGOING})
 
 
 # Worked out on every render and never written: the database's

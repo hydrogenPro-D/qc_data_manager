@@ -97,7 +97,7 @@ def propagate(markings: list[str], base_status: dict[str, str],
 def propagate_detailed(
     markings: list[str], base_status: dict[str, str], decisions: dict[str, str],
     vats: dict[str, str] | None = None, ongoing: set[str] | None = None,
-    pinned: set[str] | None = None,
+    pinned: set[str] | None = None, unqueued: set[str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str], set[str]]:
     """Effective statuses, which decision produced each, and the test-first set.
 
@@ -119,6 +119,14 @@ def propagate_detailed(
             read Test ongoing whatever they read otherwise, and lose their
             test-first flag: somebody is already testing them. Nothing is
             stored, so taking one off the board restores what it said before.
+        unqueued: Scrapped electrodes whose fault QC does not want tested
+            around. Their margin is condemned as always, and the run of Needs
+            testing past it is not created, so nothing is queued and nothing is
+            requested. Which failures these are is a setting, see
+            qc_requests/coupon_columns: an IC failure asks for no coupons by
+            default, and an electrode nobody will cut a coupon from is not work
+            to put in front of anybody. Decided here rather than read here, so
+            this stays a function of its arguments.
 
     Returns:
         ``({marking: status}, {marking: caused_by}, {test first}, {marking:
@@ -156,8 +164,14 @@ def propagate_detailed(
         if verdict in _SCRAPPED_FAMILY and marking in lanes:
             run, at, _bounded = lanes[marking]
             _scrap_margin(status, order, sources, causes, marking, run, at, held)
+    # THE MARGIN ALWAYS, THE QUEUE SOMETIMES. A scrap condemns its neighbours
+    # either way: that is what the fault did, not a decision about testing. The
+    # run of Needs testing beyond it is a request for work, and QC can say it
+    # does not want that work from this kind of failure, see unqueued.
+    unqueued = set(unqueued or ())
     for marking, verdict in decisions.items():
-        if verdict in _SCRAPPED_FAMILY and marking in lanes:
+        if (verdict in _SCRAPPED_FAMILY and marking in lanes
+                and marking not in unqueued):
             priorities |= _needs_testing(status, order, sources, causes,
                                          marking, *lanes[marking], pinned=held)
     _apply_release_sweeps(status, position, decisions, order, sources,

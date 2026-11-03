@@ -97,6 +97,11 @@ class TestAHandSetStatusOutranksAFrozenOne(unittest.TestCase):
             overrides_provider=lambda: dict(SCRAP),   # finalised, still sweeps
             board_provider=lambda: {},                # nothing on the board
             base_overrides_provider=lambda: dict(archived),
+            # Frozen WITH its flag, which is what the finalise recorded: this
+            # electrode sits three past the scrap, which is the test-first
+            # position. Left out, the row said nothing about its own flag and
+            # the status underneath it came out as a wait on the zone instead.
+            settled_priorities_provider=lambda: {FLAGGED} - set(by_hand),
             vat_provider=lambda: VATS,
             vat_pending_provider=lambda: False,
             pinned_provider=lambda: set(by_hand))

@@ -8,6 +8,7 @@ here, which is what keeps them testable with fakes.
 """
 
 import sys
+from collections import deque
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -21,8 +22,11 @@ import qtawesome as qta
 
 from src.app_version import UNKNOWN, current_version
 from src.data_access import app_config, build_backend
+from src.data_access.qc_requests.request_columns import (AWAITING_QC,
+                                                         KIND_MANUAL)
 from .electrodes_gui import ElectrodesWidget
 from .qc_board_gui import QcBoardWidget
+from .sampling_gui import QcSamplingWidget
 from .sem_edx_gui import SemEdxWidget
 from .poll_worker import BackgroundJob, DeferredLoad, PollWorker
 from .widgets.no_wheel_tabs import NoWheelTabWidget
@@ -33,6 +37,11 @@ APP_TITLE = "QC Data Manager"
 # Backstop only. The splash normally goes when the Electrodes read lands, a
 # couple of seconds in; this is so a read that never lands cannot strand it.
 SPLASH_HOLD_MS = 15000
+# How often to ask the database whether the sampling rule has anything new to
+# request. Not the rate at which requests are NOTICED, which is the ordinary
+# refresh: this is the rate at which they are CREATED, and production cannot
+# make them fall due faster than it makes electrodes.
+SAMPLING_SWEEP_MS = 60_000
 TEST_DB_WARNING = "Connected to test database"
 # Loud on purpose. Someone who does not notice this will believe a morning of
 # decisions went to the real board.
@@ -154,6 +163,11 @@ class MainWindow(QMainWindow):
         self.electrodes_widget = ElectrodesWidget(
             on_check_for_updates=self._update_callbacks["electrodes"],
             on_status_override=self._on_status_override,
+            on_qc_request=self._on_qc_request,
+            on_qc_answer=self._on_qc_answer,
+            get_coupon_settings=self.backend.get_coupon_settings,
+            on_coupon_setting=self._on_coupon_setting,
+            get_request_window_days=app_config.qc_request_window_days,
         )
         # Read after the window is up, not before it. The 12k rows and their
         # status propagation are about 700ms, and nothing about opening the
@@ -211,6 +225,27 @@ class MainWindow(QMainWindow):
         self.sem_edx_widget.data_changed.connect(self._on_sem_edx_changed)
         self.tabs.addTab(self.sem_edx_widget, "SEM EDX")
 
+        # --- QC Sampling tab: how long the good and bad stretches run, and
+        # what that says about how often to test. It reads nothing of its own:
+        # the electrode frame arrives through _apply_electrodes, the same one
+        # the table above and the board are given, so the statuses it measures
+        # are the ones on screen. That also settles which database it is
+        # looking at, which is whichever one the app is connected to.
+        # The intervals and the on/off switch are the one thing here that is
+        # not derived: they are set by hand and stored in qc_requests, where
+        # the request rules read them too. The switch in particular has to be
+        # there rather than here, because the rule runs in the database and
+        # Production Data Manager calls it as well.
+        self.sampling_widget = QcSamplingWidget(
+            get_intervals=self.backend.get_sampling_intervals,
+            on_interval_changed=self.backend.set_sampling_interval,
+            get_switch=self.backend.get_sampling_switch,
+            on_switch_changed=self.backend.set_sampling_switch)
+        self.sampling_widget.show_loading()
+        self.sampling_widget.reload_intervals()
+        self.sampling_widget.reload_switch()
+        self.tabs.addTab(self.sampling_widget, "QC Sampling")
+
         main_layout.addWidget(self.tabs, 1)
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
@@ -231,6 +266,9 @@ class MainWindow(QMainWindow):
         Deliberately NOT triggered by a tab change: a switch should cost
         nothing, and the timer picks the change up within one interval anyway.
         """
+        # No entry for the sampling tab: it has no watermark of its own and
+        # nothing to poll for. It rides the electrodes reload instead, through
+        # _apply_electrodes.
         self._widgets_by_key = {
             "electrodes": self.electrodes_widget,
             "qc_board": self.qc_board_widget,
@@ -264,9 +302,16 @@ class MainWindow(QMainWindow):
         self._background_worker.moveToThread(self._poll_thread)
         self.background_requested.connect(self._background_worker.run)
         self._background_worker.finished.connect(self._on_background_finished)
-        # What to call with the answer. One at a time: the only caller is a
-        # modal dialog, which cannot ask twice.
-        self._background_done = None
+        # What to call with each answer, in the order the jobs were sent.
+        #
+        # A QUEUE, NOT ONE SLOT. It was one slot while the only caller was a
+        # modal dialog, which cannot ask twice. The sampling sweep is a second
+        # caller now and it fires on a timer, so a save started while a sweep
+        # was still running handed the save's callback the sweep's row count
+        # and dropped the frames it was waiting for. The worker runs one job at
+        # a time and reports them in order, so a queue keeps each answer with
+        # the caller that asked for it.
+        self._background_done: deque = deque()
         # Which tabs are still showing a placeholder, so the poll timer does
         # not ask about a table that has not had its first read.
         self._awaiting = {"electrodes", "sem_edx"}
@@ -287,6 +332,45 @@ class MainWindow(QMainWindow):
         self._auto_refresh_timer.setInterval(app_config.auto_refresh_interval_ms())
         self._auto_refresh_timer.timeout.connect(self._auto_refresh_tick)
         self._auto_refresh_timer.start()
+
+        # WHOEVER IS OPEN KEEPS THE SAMPLING MOVING. The rule lives in the
+        # database, because the database is the only thing that is always up,
+        # but a database only acts when something calls it. Both applications
+        # call this one and it is safe to repeat: it raises what is due and
+        # nothing else, so two of them calling at once costs one wasted query.
+        #
+        # Slower than the poll that NOTICES requests. Production turns out an
+        # electrode every ten minutes or so, so asking every minute is already
+        # far more often than the answer can change.
+        self._sampling_timer = QTimer(self)
+        self._sampling_timer.setInterval(SAMPLING_SWEEP_MS)
+        self._sampling_timer.timeout.connect(self._raise_due_requests)
+        self._sampling_timer.start()
+        # And once now, so opening the app after a weekend does not wait a
+        # minute to notice what fell due over it.
+        self._raise_due_requests()
+
+    def _raise_due_requests(self) -> None:
+        """Raise whatever the two automatic rules now say is outstanding.
+
+        The sampling rule, and the catch-up for electrodes a failure says to
+        test next that nobody has asked production for. The second exists
+        because those are requested at the instant a failure is finalised and
+        at no other time, so a flag that predates the requests, or one raised
+        while the schema was out of reach, would wait for ever.
+
+        Off the UI thread: the first reads the electrode list and the process
+        log, which is not work to do between two paints. Nothing is rendered
+        from the answer, the requests arrive on the next poll like any other
+        change, so a failure here costs one sweep.
+        """
+        if getattr(self, "backend", None) is None:
+            return
+        # Nothing to call back: the requests arrive on the next poll like any
+        # other change. The place in the queue is still taken, so the answer
+        # cannot be handed to somebody else's callback.
+        self._background_done.append(None)
+        self.background_requested.emit(self.backend.raise_outstanding_requests)
 
     def _warn_if_not_production(self) -> None:
         """Say so, in the tab bar's corner, when this is not the real database.
@@ -366,6 +450,25 @@ class MainWindow(QMainWindow):
         else:
             self.electrodes_widget.patch_statuses(frame)
         self.qc_board_widget.load_electrodes(frame)
+        # Re-measured from the same frame. There is no patching to do here:
+        # the run lengths are computed from the whole column, so one changed
+        # status can move every figure on the tab.
+        self._reload_sampling(frame)
+
+    def _reload_sampling(self, frame) -> None:
+        """Hand the sampling tab a new frame, unless somebody is using it.
+
+        Held back while a range is being typed or a slider dragged: re-measuring
+        rebuilds every table on the tab. The frame is still handed over, so the
+        next Analyse picks it up rather than measuring the stale one.
+        """
+        try:
+            if self.sampling_widget.is_busy():
+                self.sampling_widget.frame = frame
+                return
+            self.sampling_widget.load_data(frame)
+        except Exception as e:
+            print(f"Refreshing the sampling tab failed: {e}")
 
     def _on_status_override(self, marking: str, status: str) -> None:
         """Set one electrode's status by hand, then repaint the changed rows."""
@@ -374,6 +477,58 @@ class MainWindow(QMainWindow):
             self._apply_electrodes(self.backend.reprocess_metadata())
         except Exception as e:
             print(f"Setting the status of {marking} failed: {e}")
+
+    def _on_qc_request(self, marking: str, coupons: str = "") -> bool:
+        """Ask production for one electrode, then show it as asked for."""
+        return self._after_qc_write(
+            lambda: self.backend.raise_qc_request(marking, KIND_MANUAL,
+                                                  coupons),
+            marking)
+
+    def _on_qc_answer(self, marking: str, approve: bool,
+                      coupons: str = "") -> bool:
+        """Answer an electrode production offered.
+
+        Accepting records what QC wants cut as well as the answer itself. The
+        coupons are written first: if the approve then fails, nothing has moved
+        that an operator can see, whereas the other order would leave a request
+        asking for coupons nobody agreed to.
+        """
+        state = AWAITING_QC
+
+        def write() -> bool:
+            if approve:
+                if coupons:
+                    self.backend.set_request_coupons(marking, coupons)
+                return self.backend.approve_qc_request(marking, state)
+            return self.backend.decline_qc_request(marking, state)
+
+        return self._after_qc_write(write, marking)
+
+    def _on_coupon_setting(self, reason: str, coupons: str) -> bool:
+        """Record one coupon setting. The tab rebuilds from it afterwards."""
+        try:
+            return bool(self.backend.set_coupon_setting(reason, coupons))
+        except Exception as e:
+            print(f"Could not save the coupon setting: {e}")
+            return False
+
+    def _after_qc_write(self, write, marking: str) -> bool:
+        """Run one request write and repaint from what the database now says.
+
+        Re-read rather than echoed: the other application writes these rows
+        too, so what landed is a question only the database can answer. The
+        read is the cached electrode frame reprocessed, which costs no round
+        trip of its own.
+        """
+        try:
+            changed = bool(write())
+        except Exception as e:
+            print(f"The QC request for {marking} failed: {e}")
+            return False
+        if changed:
+            self._apply_electrodes(self.backend.reprocess_metadata())
+        return changed
 
     def _on_board_changed(self) -> None:
         """A board move changed one electrode's status.
@@ -405,7 +560,7 @@ class MainWindow(QMainWindow):
 
     def _on_background_finished(self, result, error) -> None:
         """Hand a background answer to whoever asked. Back on the UI thread."""
-        done, self._background_done = self._background_done, None
+        done = self._background_done.popleft() if self._background_done else None
         if callable(done):
             done(result, error)
 
@@ -435,7 +590,7 @@ class MainWindow(QMainWindow):
                 self.sem_edx_widget.apply_saved(generation, frames)
             done(error is None, error)
 
-        self._background_done = rendered
+        self._background_done.append(rendered)
         self.background_requested.emit(work)
 
     def _on_sem_edx_changed(self, generation: str = "") -> None:
@@ -485,6 +640,12 @@ class MainWindow(QMainWindow):
         if self._poll_in_flight:
             return
         widget = self.tabs.currentWidget()
+        # The sampling tab has no watermark of its own: what it measures is the
+        # electrode statuses, so that is what it asks about. Without this it is
+        # in none of the polling keys and nothing is polled at all while it is
+        # the tab on screen.
+        if widget is self.sampling_widget:
+            widget = self.electrodes_widget
         if widget is None or self._is_widget_busy(widget):
             return
         for key, candidate in self._widgets_by_key.items():
@@ -513,6 +674,7 @@ class MainWindow(QMainWindow):
             if key == "electrodes":
                 if result is None:
                     self.electrodes_widget.hide_loading()
+                    self.sampling_widget.hide_loading()
                 else:
                     self._apply_electrodes(result, reload=True)
                 # The visible tab now has its rows, so the splash has nothing
@@ -557,6 +719,7 @@ class MainWindow(QMainWindow):
         # what the add dialog offers.
         if changed and key == "electrodes":
             self.qc_board_widget.load_electrodes(result.get("data"))
+            self._reload_sampling(result.get("data"))
 
     @staticmethod
     def _is_widget_busy(widget) -> bool:
@@ -570,6 +733,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         """Stop the poller, then release backend resources."""
         self._auto_refresh_timer.stop()
+        self._sampling_timer.stop()
         self._poll_thread.quit()
         # Bounded, so a poll still waiting on the network cannot hold the app
         # open. The connection goes with the process either way.

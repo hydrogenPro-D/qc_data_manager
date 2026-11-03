@@ -125,6 +125,14 @@ TABLE_STYLE = """
     }
 """ + SCROLLBAR_STYLE
 
+# For a list that is scanned rather than read, in a panel that is short of
+# height. Same look, a header that takes what it needs and no more: the pull
+# list beside the electrode table is pinned above the report button, so every
+# pixel its header keeps is a pixel of the chart above it.
+PULL_LIST_TABLE_STYLE = TABLE_STYLE + """
+    QHeaderView::section { padding: 4px 6px; }
+"""
+
 # For tables with many narrow numeric columns. Same look, tighter horizontal
 # padding and a smaller header, so twenty columns still fit on one screen.
 COMPACT_TABLE_STYLE = TABLE_STYLE + """

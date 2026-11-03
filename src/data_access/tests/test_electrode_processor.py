@@ -211,3 +211,56 @@ class TestOnlyAnOutcomeCarriesADate(unittest.TestCase):
         dates = self._finalised(by_hand)
         dated = {status for marking, status in by_hand.items() if dates[marking]}
         self.assertEqual(dated, {str(status) for status in DECIDED})
+
+
+class TestWhyAnElectrodeFailed(unittest.TestCase):
+    """The codes behind the badges beside a Tested, failed verdict.
+
+    Both can be true at once and neither has to be: an operator who left the
+    findings blank leaves a failure with no reason, which has to read as no
+    badge rather than as a guess.
+    """
+
+    MARKING = "B14993"
+
+    def _codes(self, status, findings) -> str:
+        from src.data_access.electrodes.electrode_columns import FAILURE_COLUMN
+
+        processor = ElectrodeProcessor(
+            status_by_marking={self.MARKING: str(status)},
+            pinned_provider=lambda: {self.MARKING},
+            findings_provider=lambda marking: findings)
+        out = processor.process(frame([self.MARKING]))
+        return str(out[FAILURE_COLUMN].iloc[0])
+
+    def _failed(self, findings) -> str:
+        return self._codes(ElectrodeStatus.TESTED_AND_SCRAPPED, findings)
+
+    def test_the_ic_test_failed(self) -> None:
+        self.assertEqual(self._failed({"ic_result": "failed"}), "ic")
+
+    def test_the_sem_found_a_crack(self) -> None:
+        self.assertEqual(self._failed({"sem_result": "cracked"}), "crack")
+
+    def test_both_of_them(self) -> None:
+        self.assertEqual(
+            self._failed({"ic_result": "failed", "sem_result": "cracked"}),
+            "ic,crack")
+
+    def test_nothing_written_down_says_nothing(self) -> None:
+        self.assertEqual(self._failed({}), "")
+        self.assertEqual(self._failed({"ic_result": "", "sem_result": ""}), "")
+
+    def test_a_test_that_passed_is_not_a_reason(self) -> None:
+        self.assertEqual(
+            self._failed({"ic_result": "passed", "sem_result": "accepted"}), "")
+
+    def test_an_electrode_swept_into_rejected_has_no_reason_of_its_own(self) -> None:
+        """It was never tested, so it must not borrow the tested one's."""
+        self.assertEqual(
+            self._codes(ElectrodeStatus.SCRAPPED, {"ic_result": "failed"}), "")
+
+    def test_nor_has_one_that_passed(self) -> None:
+        self.assertEqual(
+            self._codes(ElectrodeStatus.TESTED_AND_RELEASED,
+                        {"ic_result": "failed"}), "")

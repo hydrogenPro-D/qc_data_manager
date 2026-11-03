@@ -10,6 +10,9 @@ import pandas as pd
 
 from src.data_access.electrodes.electrode_columns import (
     DECIDED,
+    FAILED_CRACK,
+    FAILED_IC,
+    FAILURE_COLUMN,
     ElectrodeColumns,
     ElectrodeStatus,
     STATUS_COLUMN,
@@ -18,9 +21,52 @@ from src.data_access.electrodes.electrode_columns import (
     LOCKED_BY_COLUMN,
     VAT_COLUMN,
     FINALISED_COLUMN,
+    NOTHING_LEFT_TO_ASK,
 )
 from src.data_access.electrodes.status_propagation import propagate_detailed
 from src.data_access.electrodes.waiting_status import waiting_statuses
+from src.data_access.qc_requests.request_columns import (DECLINED,
+                                                         EXPIRED,
+                                                         SENT,
+                                                         QC_COUPONS_COLUMN,
+                                                         QC_REQUESTED_COLUMN,
+                                                         QC_STATUS_COLUMN,
+                                                         state_label)
+from src.data_access.qc_board.qc_board_columns import (IC_FAILED,
+                                                       IC_RESULT,
+                                                       SEM_CRACKED,
+                                                       SEM_RESULT)
+
+
+# WHAT process() WORKS OUT rather than reads off the row. The Electrodes tab
+# patches a changed row by copying these across from a freshly processed frame,
+# so a derived column missing from the list is computed and then thrown away,
+# leaving a stale cell on screen. That went wrong with the finalised date, then
+# with the QC request state, then with the coupons, each time because a new
+# column was added here and not there. So there is ONE list and both ends read
+# it; adding a derived column to process() means adding it here, once.
+DERIVED_COLUMNS = (STATUS_COLUMN, PRIORITY_COLUMN, LOCKED_BY_COLUMN,
+                   FAILURE_COLUMN, FINALISED_COLUMN, QC_STATUS_COLUMN,
+                   QC_REQUESTED_COLUMN, QC_COUPONS_COLUMN)
+
+
+# The ends a request can come to with no electrode arriving. Sent is not one
+# of them: there the coupons describe what QC actually has.
+_NOTHING_COMING = frozenset({DECLINED, EXPIRED})
+
+
+def _coupons_worth_showing(request: dict | None) -> str:
+    """What a request asks be cut, while that is still worth knowing.
+
+    Blank once production is not sending the electrode, whether they said so
+    or ran out of time to. The icon says what QC will get from this one, and
+    from an electrode that is not coming it will get nothing, so the coupons
+    an answered question asked for are only noise on the row.
+    """
+    request = request or {}
+    if str(request.get("state", "")).strip() in _NOTHING_COMING:
+        return ""
+    return request.get("coupons", "")
 
 
 class ElectrodeProcessor:
@@ -36,7 +82,9 @@ class ElectrodeProcessor:
                  pinned_provider=None,
                  finalised_provider=None,
                  findings_provider=None,
-                 revisited_provider=None) -> None:
+                 revisited_provider=None,
+                 qc_request_provider=None,
+                 unqueued_provider=None) -> None:
         # Handed in, read once per backend rather than per refresh. The
         # backend owns where they come from, which keeps this class pure data
         # in, data out and lets tests pass a dict.
@@ -67,6 +115,10 @@ class ElectrodeProcessor:
         # process(), so a card added on another machine shows up on the next
         # poll rather than at the next restart.
         self._ongoing_provider = ongoing_provider
+        # Which scraps QC does not want tested around, worked out from what
+        # failed and what the coupon settings say that failure is worth. Their
+        # margin is condemned as always; the queue past it is not created.
+        self._unqueued_provider = unqueued_provider
         # Which statuses an operator set by hand. No sweep may claim one, and
         # none of them can be beaten by a frozen status covering the same
         # electrode: if a row is not locked, the status you pick is the status
@@ -81,6 +133,9 @@ class ElectrodeProcessor:
         # {marking: the live verdict whose re-test unfroze it}. Those move
         # with that card even when another decision settles them.
         self._revisited_provider = revisited_provider
+        # {marking: request state}. Read on every process(), so a decision
+        # taken in the other application shows up on the next poll.
+        self._qc_request_provider = qc_request_provider
 
     def set_base_status(self, marking: str, status: str) -> None:
         """Record a status set by hand, so the next process() shows it.
@@ -127,6 +182,9 @@ class ElectrodeProcessor:
         out[PRIORITY_COLUMN] = markings.map(
             lambda marking: PRIORITY_FLAG if marking in priorities else "")
         out[LOCKED_BY_COLUMN] = markings.map(locked_by).fillna("")
+        out[FAILURE_COLUMN] = [
+            self._failure_codes(marking, status)
+            for marking, status in zip(markings, out[STATUS_COLUMN].astype(str))]
         # Blank wherever nothing has actually settled, whatever the database
         # holds, and it can hold a stale date for either case:
         #
@@ -149,6 +207,29 @@ class ElectrodeProcessor:
         # all agree.
         out[FINALISED_COLUMN] = markings.map(self._finalised()).fillna("").where(
             settled, "")
+        requests = (dict(self._qc_request_provider() or {})
+                    if self._qc_request_provider else {})
+        out[QC_STATUS_COLUMN] = markings.map(
+            lambda marking: state_label(
+                (requests.get(marking) or {}).get("state", "")))
+        # Carried on the frame but not in the display map, so the pull list can
+        # show when an electrode was asked for without the main table, which
+        # already has nine columns, growing a tenth.
+        out[QC_REQUESTED_COLUMN] = markings.map(
+            lambda marking: (requests.get(marking) or {}).get("requested", ""))
+        out[QC_COUPONS_COLUMN] = markings.map(
+            lambda marking: _coupons_worth_showing(requests.get(marking)))
+        # QUIET ON AN ELECTRODE THERE IS NOTHING TO ASK ABOUT. A released or
+        # scrapped one is finished, and one on a rig is already at QC, so a
+        # request against it is a question nobody is waiting on an answer to.
+        # Sent stays: that is a fact about where the electrode went.
+        done = out[STATUS_COLUMN].astype(str).isin(
+            {str(status) for status in NOTHING_LEFT_TO_ASK})
+        quiet = done & (out[QC_STATUS_COLUMN] != state_label(SENT))
+        out[QC_STATUS_COLUMN] = out[QC_STATUS_COLUMN].where(~quiet, "")
+        # And with it the icon, which would otherwise be left standing on its
+        # own in a cell that no longer says anything.
+        out[QC_COUPONS_COLUMN] = out[QC_COUPONS_COLUMN].where(~quiet, "")
         vats = self._vats()
         if vats or self._vats_pending():
             # A dict lookup per marking, never a join against the process log.
@@ -160,6 +241,27 @@ class ElectrodeProcessor:
         """``{marking: vat}``, empty when the process log is out of reach."""
         return dict(self._vat_provider() or {}) if self._vat_provider else {}
 
+    def _failure_codes(self, marking: str, status: str) -> str:
+        """Why this electrode failed, or "" where there is nothing to say.
+
+        Only for one somebody actually put on a rig. A neighbour swept into
+        Rejected was never tested and never observed, so it has no reason and
+        must not borrow the tested one's.
+
+        Both can be true at once, and neither has to be: an operator who left
+        the findings blank leaves a failure with no reason, which is shown as
+        no badge rather than as a guess.
+        """
+        if status != str(ElectrodeStatus.TESTED_AND_SCRAPPED) or not self._findings_provider:
+            return ""
+        found = self._findings_provider(marking) or {}
+        codes = []
+        if str(found.get(IC_RESULT, "")) == IC_FAILED:
+            codes.append(FAILED_IC)
+        if str(found.get(SEM_RESULT, "")) == SEM_CRACKED:
+            codes.append(FAILED_CRACK)
+        return ",".join(codes)
+
     def _finalised(self) -> dict[str, str]:
         """``{marking: when its status settled}``, empty where nothing has."""
         return dict(self._finalised_provider() or {}) if self._finalised_provider else {}
@@ -169,15 +271,20 @@ class ElectrodeProcessor:
         return bool(self._vat_pending_provider()) if self._vat_pending_provider else False
 
     def display_columns(self) -> list[str]:
-        """Column order for the table: the stored columns, then the derived ones.
+        """Every column the frame carries, in order. Not every one is shown.
+
+        process() reindexes onto this, so a column left out of it is dropped
+        before the frame reaches the screen. What the Electrodes TABLE shows is
+        a second, narrower list, its display map; the last two here are carried
+        for the pull list and the coupon icon and never get a column of their
+        own. Both were missing from the panel until they were named here.
 
         The vat only earns a column when there are vats to put in it.
         """
         columns = [c.value for c in ElectrodeColumns]
         if self._vats() or self._vats_pending():
             columns.append(VAT_COLUMN)
-        return columns + [STATUS_COLUMN, FINALISED_COLUMN, PRIORITY_COLUMN,
-                          LOCKED_BY_COLUMN]
+        return columns + list(DERIVED_COLUMNS)
 
     def status_for(self, df: pd.DataFrame) -> pd.Series:
         """Per-electrode QC status, joined on the marking.
@@ -206,7 +313,9 @@ class ElectrodeProcessor:
             list(markings), base, decisions, vats=self._vats(),
             ongoing=set(self._ongoing_provider() or ())
             if self._ongoing_provider else set(),
-            pinned=self.pinned())
+            pinned=self.pinned(),
+            unqueued=set(self._unqueued_provider() or ())
+            if self._unqueued_provider else set())
 
         # Test first belongs on an electrode that is waiting to be tested, and
         # nowhere else: it means "of the ones in the queue, do this one first".
@@ -214,8 +323,19 @@ class ElectrodeProcessor:
         # now, there is nothing left to do first. Worth stating as one rule,
         # because a flag finalised in an earlier round comes back through
         # ``settled`` and would otherwise ride on top of the new verdict.
+        # A FROZEN ROW CARRIES ITS OWN FLAG, set or not. ``settled`` is the
+        # frozen rows that say test first; one frozen WITHOUT the flag said so
+        # at the finalise, and the live sweep re-flagging it contradicts the
+        # record it is standing on. B13831 read "to be tested first" against a
+        # frozen row that says it is not, with no open card to explain it.
+        #
+        # So the sweep only flags electrodes whose status is not settled. A
+        # stale frozen row is not settled either, so one the sweep has taken
+        # back falls through to the sweep's answer, which is what it should do.
+        standing = (set(self._base_overrides_provider())
+                    if self._base_overrides_provider else set())
         waiting = str(ElectrodeStatus.NEEDS_TESTING)
-        flagged = {marking for marking in settled | priorities
+        flagged = {marking for marking in settled | (priorities - standing)
                    if effective.get(marking) == waiting}
 
         # What the rest of the zone is really waiting on. After ``flagged``,

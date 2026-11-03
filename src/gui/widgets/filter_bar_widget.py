@@ -26,29 +26,37 @@ from PyQt6.QtWidgets import (
     QLineEdit, QStackedWidget, QComboBox,
 )
 
+from ..styles.button_styles import QUIET_BUTTON_STYLE
 from .no_scroll_inputs import NoScrollComboBox, NoScrollDateEdit
 from .table_delegates import TickDelegate
 
 _ALL = "__all__"
 
+# FIVE, NOT FOURTEEN. At the height of these fields a radius near half of it
+# makes every one of them a capsule, which is the shape a generated interface
+# reaches for and it showed. Enough to take the hard corner off and no more.
 _COMBO_STYLE = """
     QComboBox {
         background-color: #FFFFFF;
         border: 1px solid #D1D5DB;
-        border-radius: 14px;
-        padding: 4px 10px;
+        border-radius: 5px;
+        padding: 4px 8px;
         font-family: 'Segoe UI', Arial, sans-serif;
         font-size: 12px;
         font-weight: 600;
         color: #374151;
-        min-width: 58px;
+        /* Only wide enough to be clickable. What it actually needs is set per
+           control from the text on display, see CheckableFilterCombo. */
+        min-width: 34px;
     }
     QComboBox:hover { border: 1px solid #9CA3AF; }
     QComboBox:focus { border: 1.5px solid #55BDBD; }
+    /* Beside the right padding, not inside it: whatever this takes is width
+       the text cannot use, which is why it is counted in CLOSED_PADDING. */
     QComboBox::drop-down {
         subcontrol-origin: padding;
         subcontrol-position: center right;
-        width: 20px;
+        width: 18px;
         border: none;
     }
     /* No arrow asset ships with the app, so draw one out of borders. */
@@ -57,7 +65,7 @@ _COMBO_STYLE = """
         border-left: 4px solid transparent;
         border-right: 4px solid transparent;
         border-top: 5px solid #6B7280;
-        margin-right: 6px;
+        margin-right: 5px;
     }
     QComboBox::down-arrow:on { top: 1px; }
     QComboBox QAbstractItemView {
@@ -74,7 +82,7 @@ _MODE_BUTTON_STYLE = """
         background-color: #FFFFFF;
         color: #4B5563;
         border: 1px solid #D1D5DB;
-        border-radius: 13px;
+        border-radius: 5px;
         padding: 4px 12px;
         font-family: 'Segoe UI', Arial, sans-serif;
         font-size: 12px;
@@ -92,7 +100,7 @@ _DATE_EDIT_STYLE = """
     QDateEdit {
         background-color: #FFFFFF;
         border: 1px solid #D1D5DB;
-        border-radius: 13px;
+        border-radius: 5px;
         /* Room on the right for the calendar icon, which sits over the field. */
         padding: 4px 26px 4px 10px;
         font-family: 'Segoe UI', Arial, sans-serif;
@@ -155,37 +163,25 @@ _SEARCH_STYLE = """
     QLineEdit {
         background-color: #FFFFFF;
         border: 1px solid #E1E1E1;
-        border-radius: 14px;
+        border-radius: 5px;
         padding: 5px 12px;
         font-family: 'Segoe UI', Arial, sans-serif;
         font-size: 12px;
         color: #1F1F1F;
-        min-width: 140px;
+        min-width: 112px;
     }
     QLineEdit:focus { border: 1.5px solid #55BDBD; }
 """
 
 _LABEL_STYLE = "color: #6B6B6B; font-size: 12px; font-weight: 600;"
 
-_CLEAR_BUTTON_STYLE = """
-    QPushButton {
-        background-color: #FFFFFF;
-        border: 1px solid #D1D5DB;
-        border-radius: 14px;
-        padding: 5px 14px;
-        font-family: 'Segoe UI', Arial, sans-serif;
-        font-size: 12px;
-        font-weight: 600;
-        color: #6B7280;
-    }
-    QPushButton:hover { border: 1px solid #55BDBD; color: #14B8A6; }
-    QPushButton:pressed { background-color: #F0FAFA; }
-"""
+# The shared quiet button, which this one is the original of.
+_CLEAR_BUTTON_STYLE = QUIET_BUTTON_STYLE
 
 # The search box reserves room for a phrase; a marking is six characters, and
 # the search box's min-width would otherwise decide the range fields' minimum
 # and keep the whole strip wider than the window.
-_RANGE_INPUT_STYLE = _SEARCH_STYLE.replace("min-width: 140px;", "min-width: 30px;")
+_RANGE_INPUT_STYLE = _SEARCH_STYLE.replace("min-width: 112px;", "min-width: 30px;")
 
 
 @dataclass
@@ -281,9 +277,11 @@ class CheckableFilterCombo(NoScrollComboBox):
     # scrollbar so the last character is never clipped by one appearing.
     POPUP_PADDING = (TickDelegate.LEFT + TickDelegate.SIZE + TickDelegate.GAP
                      + 6 + 26)
-    # And on the closed combo: the 10px padding either side from _COMBO_STYLE,
-    # the 20px arrow, the border, and a little slack so nothing is elided.
-    CLOSED_PADDING = 10 + 10 + 20 + 2 + 6
+    # And on the closed combo, every pixel the text cannot have: the 8px
+    # padding either side from _COMBO_STYLE, the 18px arrow strip, which sits
+    # beside the padding rather than inside it, the border, and a little slack
+    # so nothing is elided.
+    CLOSED_PADDING = 8 + 8 + 18 + 2 + 4
 
     def __init__(self, all_label: str = "All", parent=None) -> None:
         super().__init__(parent)
@@ -299,6 +297,22 @@ class CheckableFilterCombo(NoScrollComboBox):
         self.view().setRowHidden(0, True)
         self.view().viewport().installEventFilter(self)
         self._show_summary()
+
+    def sizeHint(self):  # noqa: N802 (Qt naming)
+        """As wide as the text on display, not as wide as the longest option.
+
+        A combo's own hint fits its widest item, so the Status filter reserved
+        room for "Tested and Released" while showing the word "All", and six of
+        them together pushed the bar past the window. The popup is widened
+        separately by _fit_popup, so the closed control never needed that room.
+        """
+        hint = super().sizeHint()
+        hint.setWidth(self.minimumWidth())
+        return hint
+
+    def minimumSizeHint(self):  # noqa: N802 (Qt naming)
+        """Same answer, or a layout would fall back to the widest item again."""
+        return self.sizeHint()
 
     # ---- the options ---------------------------------------------------
     def set_options(self, options: list) -> None:
@@ -389,12 +403,32 @@ class CheckableFilterCombo(NoScrollComboBox):
             text = f"{len(chosen)} chosen"
         self.model().item(0).setText(text)
         self.setCurrentIndex(0)
-        # A combo sizes itself on first show and then keeps that width, so a
-        # longer value picked later was elided. Grown to fit what it displays
-        # now, which also shrinks back when the filter is cleared.
+        self._fit_closed()
+
+    def _fit_closed(self) -> None:
+        """Width enough for the text on display, and no more.
+
+        A combo sizes itself on first show and then keeps that width, so a
+        longer value picked later was elided. Grown to fit what it displays now,
+        which also shrinks back when the filter is cleared.
+        """
         metrics = QFontMetrics(self.font())
+        text = self.model().item(0).text()
         self.setMinimumWidth(metrics.horizontalAdvance(text) + self.CLOSED_PADDING)
         self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Measure again when the font changes, not only when the text does.
+
+        The caller applies the stylesheet after constructing this, and the
+        stylesheet is what sets the font it paints with. Measured once in the
+        constructor, every combo was sized against whatever font it happened to
+        have at the time, and the ones the owning tab never refilled kept it and
+        rendered "All" as "Al".
+        """
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._fit_closed()
 
 
 class DateRangeWidget(QWidget):
@@ -704,6 +738,11 @@ class FilterBarWidget(QWidget):
     changed = pyqtSignal()
 
     SEARCH_DEBOUNCE_MS = 250
+    SEARCH_WIDTH = 150
+    # A caption belongs to the control beside it, so it sits closer to that than
+    # the gap between one filter and the next. Uniform spacing read as twelve
+    # separate things on the row rather than six pairs.
+    CAPTION_GAP = 5
 
     def __init__(self, dropdowns: list[FilterDropdown], parent=None,
                  with_date: bool = True, with_search: bool = True,
@@ -762,14 +801,11 @@ class FilterBarWidget(QWidget):
 
         first = row()
         for dropdown in self._dropdowns:
-            caption = QLabel(dropdown.label)
-            caption.setStyleSheet(_LABEL_STYLE)
             combo = CheckableFilterCombo(dropdown.all_label)
             combo.setStyleSheet(_COMBO_STYLE)
             combo.changed.connect(self._relay)
             self._combos[dropdown.key] = combo
-            first.addWidget(caption, 0)
-            first.addWidget(combo, 0)
+            first.addWidget(self._captioned(dropdown.label, combo), 0)
 
         # Stacked, the ranges drop to a second line together; otherwise they
         # follow on. Two lines rather than three: the electrode range and the
@@ -815,6 +851,9 @@ class FilterBarWidget(QWidget):
 
         if with_search:
             self.search_input = QLineEdit()
+            # Capped: it is searching for a marking, six characters, and left
+            # to its own hint it took more of the row than any filter.
+            self.search_input.setMaximumWidth(self.SEARCH_WIDTH)
             self.search_input.setPlaceholderText(f"🔍  {search_placeholder}")
             self.search_input.setClearButtonEnabled(True)
             self.search_input.setStyleSheet(_SEARCH_STYLE)
@@ -832,6 +871,19 @@ class FilterBarWidget(QWidget):
         # add_trailing.
         self._rows = rows
         self.setLayout(outer)
+
+    @classmethod
+    def _captioned(cls, label: str, widget) -> QWidget:
+        """One filter: its caption and its control, kept together."""
+        caption = QLabel(label)
+        caption.setStyleSheet(_LABEL_STYLE)
+        group = QWidget()
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(cls.CAPTION_GAP)
+        layout.addWidget(caption, 0)
+        layout.addWidget(widget, 0)
+        return group
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

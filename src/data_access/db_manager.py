@@ -51,7 +51,15 @@ from src.data_access.electrodes.electrode_status_db import (
 )
 from src.data_access.electrodes.electrode_vat_db import load_vat_by_marking
 from src.data_access.electrodes.status_propagation import propagate_detailed
+from src.data_access.qc_board.qc_board_columns import (IC_FAILED, IC_RESULT,
+                                                       SEM_CRACKED, SEM_RESULT)
 from src.data_access.qc_board.qc_board_db_store import QcBoardDbStore
+from src.data_access.qc_requests import coupon_db_source, request_db_source
+from src.data_access.qc_requests import coupon_columns
+from src.data_access.qc_requests.request_columns import KIND_FAULT
+from src.data_access.sampling.interval_db_source import (load_intervals,
+                                                         set_interval)
+from src.data_access.sampling.switch_db_source import load_switch, set_switch
 from src.data_access.sem_edx import sem_edx_db_source as sem_db
 from src.data_access.sem_edx import sem_edx_library
 from src.data_access.sem_edx.sem_edx_columns import (
@@ -94,6 +102,14 @@ QC_SCHEMA = "qc_data"
 _ELECTRODE_STATUS_ENTITY = "electrode_status"
 _QC_BOARD_ENTITY = "qc_board"
 _SEM_EDX_ENTITY = "sem_edx"
+# The shared schema's requests. Watched by the Electrodes tab, because that is
+# where they are shown and the other application is what writes them.
+_QC_REQUEST_ENTITY = "qc_requests"
+
+# The two verdicts that condemn their neighbours. Named here because the one
+# thing asked of them is whether a decision is a failure.
+_SCRAPPED_VERDICTS = {str(ElectrodeStatus.SCRAPPED),
+                      str(ElectrodeStatus.TESTED_AND_SCRAPPED)}
 
 # Production metadata: one row per produced electrode. Read straight from the
 # base table (no view exists for it yet); [Marking] carries the B-number.
@@ -209,11 +225,17 @@ class DbManager:
         # status on every read. The GUI shares this one instance.
         # It takes the vats because a frozen sweep is only unfrozen by a card
         # from the same run, and the store is where that is decided.
-        self._qc_board = QcBoardDbStore(self._session, vat_provider=lambda: self._vats)
+        self._qc_board = QcBoardDbStore(self._session,
+                                        vat_provider=lambda: self._vats,
+                                        on_arrival=self.qc_request_arrived)
         # When each by-hand correction was made, so a frozen board verdict on
         # the same electrode can be ordered against it. Kept in step on write:
         # nothing re-reads the statuses after startup.
         self._manual_edits = load_manual_edit_times(self._session)
+        # What QC wants cut from a sampled electrode, per reason. Read here
+        # because the statuses depend on it: a failure QC wants nothing from
+        # queues no neighbours, so this has to be known before the first render.
+        self._coupons = coupon_db_source.load_settings(self._session)
         self._electrodes = ElectrodeProcessor(
             status_by_marking=load_status_from_db(self._session),
             overrides_provider=self._sweeping_decisions,
@@ -225,10 +247,12 @@ class DbManager:
             vat_provider=lambda: self._vats,
             vat_pending_provider=self.vats_pending,
             ongoing_provider=self._qc_board.ongoing_electrodes,
+            unqueued_provider=self._unqueued_scraps,
             pinned_provider=lambda: set(self._manual_edits),
             finalised_provider=self._finalised_times,
             findings_provider=self._qc_board.findings,
-            revisited_provider=self._qc_board.revisited_by)
+            revisited_provider=self._qc_board.revisited_by,
+            qc_request_provider=self.get_qc_request_details)
         # Which quantities each sheet shows, from config.json. Read per
         # generation on first use, and one processor per generation and
         # electrode type, since none of the four measures quite the same thing.
@@ -335,6 +359,168 @@ class DbManager:
         """Kept as the name the rest of this class and its tests use; the rule
         itself lives in ``sql_session`` so the stores normalize identically."""
         return _normalize_frame(df)
+
+    # ---- QC requests (qc_requests) ------------------------------------
+    def get_qc_requests(self) -> dict[str, str]:
+        """``{electrode: request state}``. Read on every render.
+
+        The other application answers these, so a decision made there has to
+        reach the screen on the next poll rather than at the next restart.
+        """
+        return request_db_source.load_requests(self._session)
+
+    def get_qc_request_details(self) -> dict[str, dict]:
+        """``{electrode: {state, requested, coupons}}``. Read on every render.
+
+        One read for all three, so a screen that grows another thing to show
+        about a request does not grow another round trip with it.
+        """
+        return request_db_source.load_request_details(self._session)
+
+    def raise_qc_request(self, electrode: str, kind: str,
+                         coupons: str = "") -> bool:
+        """Ask production for one electrode, saying what to cut from it."""
+        return request_db_source.raise_request(
+            self._session, electrode, kind,
+            coupons or coupon_columns.ALL_FIVE)
+
+    # ---- coupon settings (qc_requests) --------------------------------
+    def get_coupon_settings(self) -> dict[str, str]:
+        """``{reason: coupons}`` for all three. The copy read at startup."""
+        return dict(self._coupons)
+
+    def set_coupon_setting(self, reason: str, coupons: str) -> bool:
+        """Record one setting and adopt it, so the next render follows it.
+
+        Kept in step here rather than re-read: the statuses are computed from
+        these, and a screen that still showed the old answer until a restart
+        would make the dialog look as if it had not worked.
+        """
+        written = coupon_db_source.set_setting(self._session, reason, coupons)
+        self._coupons = coupon_db_source.load_settings(self._session)
+        return written
+
+    def set_request_coupons(self, electrode: str, coupons: str) -> bool:
+        """Say what QC wants from an electrode a technician offered."""
+        return coupon_db_source.set_request_coupons(
+            self._session, electrode, coupons)
+
+    def _unqueued_scraps(self) -> set[str]:
+        """Scraps whose neighbours QC does not want tested.
+
+        A failure queues the electrodes around it for testing, and that queue
+        is only worth making if QC wants coupons from them. An IC failure asks
+        for none by default, so the run of Needs testing past its margin is not
+        created at all: nothing is queued, nothing is requested, and the pull
+        list does not carry an instruction nobody intends to act on.
+
+        The margin itself is untouched. Those electrodes are condemned by the
+        fault, which is a statement about what happened rather than a request
+        for work.
+        """
+        unqueued = set()
+        for marking, status in self._sweeping_decisions().items():
+            if str(status) not in _SCRAPPED_VERDICTS:
+                continue
+            found = self._qc_board.findings(marking)
+            if not coupon_columns.wanted(self._coupons_for_failure(found)):
+                unqueued.add(marking)
+        return unqueued
+
+    def _coupons_for_failure(self, found: dict) -> str:
+        """What the neighbours of a failure are worth, from what failed."""
+        return coupon_columns.for_failure(
+            str(found.get(SEM_RESULT, "")) == SEM_CRACKED,
+            str(found.get(IC_RESULT, "")) == IC_FAILED,
+            self._coupons)
+
+    def approve_qc_request(self, electrode: str, expected_state: str) -> bool:
+        """Accept one a technician offered."""
+        return request_db_source.approve(self._session, electrode, expected_state)
+
+    def decline_qc_request(self, electrode: str, expected_state: str) -> bool:
+        """Turn down one a technician offered."""
+        return request_db_source.decline(self._session, electrode, expected_state)
+
+    def qc_request_arrived(self, electrode: str) -> bool:
+        """Close an open request because the electrode is on the QC board.
+
+        Called by the board store after every card. Production marks a request
+        sent when they hand the electrode over, and that step gets forgotten:
+        the request then reads as outstanding on both screens and 011 expires
+        it a fortnight later as unanswerable, which is the one thing it is
+        not. The card is the evidence that it was answered.
+        """
+        return request_db_source.arrived_at_qc(self._session, electrode)
+
+    def raise_due_qc_requests(self) -> int:
+        """Run the sampling rule. Safe to call as often as anybody likes."""
+        return request_db_source.raise_due_requests(self._session)
+
+    def raise_outstanding_requests(self) -> int:
+        """Both automatic rules, for the sweep that runs them on a timer."""
+        return self.raise_due_qc_requests() + self.raise_missing_fault_requests()
+
+    def raise_missing_fault_requests(self) -> int:
+        """Ask for any test-first electrode production has not been asked for.
+
+        The ±3 around a failure are requested when that failure is finalised,
+        which is the right moment because the flags are frozen by that call. It
+        is also the ONLY moment, and a flag outlives it: anything finalised
+        before this feature existed, or while the request schema was out of
+        reach, keeps its flag and is never asked for. Five electrodes sat like
+        that, visible in the pull list and invisible to production.
+
+        IN PYTHON, NOT IN SQL, unlike the sampling rule. The set is what the
+        pull list shows, and that is frozen flags minus the ones a hand edit
+        superseded minus the ones whose inference went stale, and staleness is
+        decided against the vat runs. Writing that a second time in SQL is how
+        the two halves of the unfreeze came to disagree; one of them is enough.
+        The cost is that it only runs while QC has the app open, which is also
+        true of the finalise that should have raised them.
+        """
+        outstanding = self._settled_priorities()
+        if not outstanding:
+            return 0
+        # One read rather than a procedure call per flag every minute: in the
+        # steady state everything here already has a request and nothing is sent.
+        try:
+            asked = set(self.get_qc_requests())
+        except Exception as e:
+            print(f"Could not check which electrodes already have a request: {e}")
+            return 0
+        return self._request_fault_tests(outstanding - asked)
+
+    # ---- sampling intervals (qc_requests) -----------------------------
+    def get_sampling_intervals(self) -> dict[str, int]:
+        """``{vat: electrodes between samples}``.
+
+        Read on every render rather than cached: the other application reads
+        the same table to decide what is due, so a figure changed on another
+        machine has to show up here without a restart.
+        """
+        return load_intervals(self._session)
+
+    def set_sampling_interval(self, vat: str, electrodes_between: int) -> bool:
+        """Record one vat's interval. False when it could not be written."""
+        return set_interval(self._session, vat, electrodes_between)
+
+    def get_sampling_switch(self) -> bool | None:
+        """Is automatic sampling on? None where there is no switch to read.
+
+        None is not off. It means this database has not had migration 016, so
+        the tab hides the control rather than offering one that writes nowhere.
+        """
+        return load_switch(self._session)
+
+    def set_sampling_switch(self, on: bool, start_now: bool = False) -> bool:
+        """Throw the switch for the whole line. False if it did not take.
+
+        ``start_now`` is read only on the way on: True asks for the next
+        electrode each vat makes, False counts a full interval from where the
+        vat stands now. See 016.
+        """
+        return set_switch(self._session, on, start_now)
 
     # ---- production metadata (dbo.MetaData) ---------------------------
     def get_metadata(self) -> pd.DataFrame:
@@ -1084,7 +1270,81 @@ class DbManager:
         if not frozen:
             return 0
         consumed = {marking} if marking else None
-        return self._qc_board.archive(frozen, priorities, consumed)
+        count = self._qc_board.archive(frozen, priorities, consumed)
+        # The plan's own record of what caused each flag, rather than the board
+        # read back afterwards: the archive has just moved those rows about, and
+        # a lookup that missed fell back to the stricter of the two settings and
+        # asked for an electrode the rule says not to ask for.
+        self._request_fault_tests(priorities, frozen)
+        return count
+
+    def _request_fault_tests(self, priorities: set[str],
+                             frozen: dict | None = None) -> int:
+        """Ask production for the electrodes a failure says to test next.
+
+        The test-first set IS the answer: the propagation already works out
+        which electrodes sit at the edge of a fault zone and would settle it,
+        which is the plus and minus three around a failure. Raising a request
+        for each of them is what turns that instruction into something
+        production can act on, rather than a flag somebody has to notice.
+
+        AFTER THE ARCHIVE, not before. The flags are frozen by that call, so a
+        request raised first could name an electrode the finalise then decides
+        differently about.
+
+        Three things are skipped. One already on the board is being tested, so
+        asking for it again is noise. One that already has a request keeps it,
+        which the procedure enforces rather than this: one row per electrode,
+        ever. And one with a verdict of its own was never in the test-first
+        set to begin with.
+
+        Failures here are printed and swallowed. The finalise has already
+        happened and is what the operator was waiting for; a request that
+        could not be raised is worth saying out loud but not worth undoing a
+        board full of decisions over.
+
+        WHAT TO CUT COMES FROM THE FAILURE THAT CAUSED THE FLAG, not from a
+        setting read here: a SEM failure and an IC failure are answered
+        differently, and these electrodes are around one or the other.
+        """
+        if not priorities:
+            return 0
+        on_board = self._qc_board.on_board()
+        raised = 0
+        for marking in sorted(priorities):
+            if marking in on_board:
+                continue
+            coupons = self._coupons_for_priority(marking, frozen)
+            try:
+                if request_db_source.raise_request(self._session, marking,
+                                                   KIND_FAULT, coupons):
+                    raised += 1
+            except Exception as e:
+                print(f"Could not request {marking} after the failure: {e}")
+        return raised
+
+    def _coupons_for_priority(self, marking: str,
+                              frozen: dict | None = None) -> str:
+        """What to cut from one test-first electrode, from the failure behind it.
+
+        The verdict that flagged it is what says which rule applies. ``frozen``
+        is the finalise's own ``{marking: (status, caused_by)}``, consulted
+        first because it is the plan that produced this flag; the board is only
+        asked for a flag that did not come from one.
+
+        Where the cause cannot be worked out at all, the strictest of the two
+        failure settings is used rather than none: a request that asks for too
+        much wastes a coupon, one that asks for too little wastes the trip.
+        """
+        source = ""
+        if frozen and marking in frozen:
+            source = str(frozen[marking][1] or "")
+        source = source or self._qc_board.caused_by(marking)
+        if not source:
+            return coupon_columns.strictest(
+                self._coupons.get(coupon_columns.REASON_SEM),
+                self._coupons.get(coupon_columns.REASON_IC))
+        return self._coupons_for_failure(self._qc_board.findings(source))
 
     def _decisions_for(self, marking: str | None) -> dict[str, str]:
         """Every board decision, or just the one named."""
@@ -1130,9 +1390,16 @@ class DbManager:
         settled = self._settled_verdicts()
         sweeping = {**{m: s for m, s in settled.items() if m in reopened},
                     **decisions}
+        # THE SAME ARGUMENTS THE SCREEN IS COMPUTED FROM, unqueued included.
+        # This is a second call to the propagation, and what it works out is
+        # what gets frozen and requested. Left without the unqueued set it
+        # disagreed with the Electrodes tab: a failure QC wants no coupons from
+        # showed no zone on screen and still froze one here, then asked
+        # production for the electrodes in it.
         effective, sources, priorities, _causes = propagate_detailed(
             markings, base, sweeping, vats=self._vats,
-            pinned=set(self._manual_edits))
+            pinned=set(self._manual_edits),
+            unqueued=self._unqueued_scraps())
         # What another card still holds is not this finalise's to freeze. Those
         # stretches are unfrozen because of a card that is staying on the board,
         # and freezing them here would stamp them with somebody else's time.
@@ -1206,14 +1473,21 @@ class DbManager:
             dbo.MetaData        which electrodes exist at all
             electrode_status    what the ranges and the by-hand edits say
             qc_board            live decisions, which SWEEP onto neighbours
+            qc_requests         what the other application has asked for
 
         The third one is easy to forget and was: move a card to Scrapped on one
         machine and up to five electrodes change status on every other machine,
         without a row of dbo.MetaData or electrode_status moving. Watching only
         the first two left the tab stale until somebody visited the QC tab.
 
+        The fourth is the other application's half of the QC request workflow:
+        a technician offering an electrode, or answering something QC asked
+        for, changes a column on this tab without touching anything else here.
+
         The poller only compares watermarks for equality, so a tuple of the
-        three is as good as one number.
+        four is as good as one number. A database that has not had the
+        qc_requests migrations run returns no such entity and the tuple simply
+        carries None there, which compares fine.
         """
         sql = (f"SELECT MAX([{METADATA_KEY}]), COUNT(*) "
                f"FROM [{METADATA_SCHEMA}].[{METADATA_TABLE}] "
@@ -1229,7 +1503,8 @@ class DbManager:
         qc = self._qc_watermarks()
         return {_METADATA_ENTITY: (produced,
                                    qc.get(_ELECTRODE_STATUS_ENTITY),
-                                   qc.get(_QC_BOARD_ENTITY))}
+                                   qc.get(_QC_BOARD_ENTITY),
+                                   qc.get(_QC_REQUEST_ENTITY))}
 
     def _reload_electrodes(self) -> pd.DataFrame:
         """The Electrodes tab's frame, after whatever moved.

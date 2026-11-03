@@ -7,30 +7,42 @@ injected callables, so it can be unit-tested with fakes and hand-built frames.
 from __future__ import annotations
 
 import datetime as dt
+import math
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QToolButton, QDialog,
-    QPushButton, QScrollArea, QSizePolicy,
+    QPushButton, QScrollArea, QSizePolicy, QHeaderView,
 )
-from PyQt6.QtCore import Qt, QEvent, QObject, QSize, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import (Qt, QEvent, QObject, QPointF, QRectF, QSize,
+                          QTimer)
+from PyQt6.QtGui import QCursor, QFont, QFontMetrics
 import pandas as pd
 import qtawesome as qta
 
 from .styles.table_styles import (
+    PULL_LIST_TABLE_STYLE,
     TABLE_STYLE,
     SCROLLBAR_STYLE,
     SCROLLBAR_HORIZONTAL_HEIGHT,
     SCROLLBAR_VERTICAL_WIDTH,
 )
-from .styles.button_styles import TOOLBAR_BUTTON_STYLE, apply_modern_shadow
+from .styles.button_styles import (QUIET_BUTTON_STYLE,
+                                   SECONDARY_BUTTON_STYLE,
+                                   TOOLBAR_BUTTON_STYLE, apply_modern_shadow)
 from .styles.tab_styles import create_styled_container_layout
 from .widgets.error_dialogs import ValidationErrorScrollDialog
+from .widgets.coupon_dialogs import CouponSettingsDialog, ask_with_coupons
 from .widgets.report_dialog import ReportDialog, build_report_html
+from src.data_access.electrodes.electrode_processor import DERIVED_COLUMNS
 from src.data_access.electrodes.status_ranges import collapse_to_ranges
 from .widgets.data_table_widget import DataTableWidget, CellStyle
 from .widgets.filter_bar_widget import FilterBarWidget, FilterDropdown
-from .widgets.table_delegates import (RowFillDelegate, StatusPillDelegate,
+from .widgets.error_dialogs import WarningDialog, ask
+from .widgets.table_delegates import (
+    CouponTextDelegate,
+    RowTintDelegate,
+    blend,
+    RequestActionDelegate,RowFillDelegate, StatusPillDelegate,
                                       PillStyle, RowHighlight, RowFlasher,
                                       LoadingCellDelegate)
 from .widgets.skeleton_overlay import (SkeletonOverlay, SHIMMER_TICK_MS,
@@ -40,6 +52,19 @@ from src.data_access.electrodes.status_propagation import electrode_number
 from .widgets.status_edit_dialog import StatusEditDialog
 from .date_display import (format_utc_date_for_display,
                            format_utc_timestamp_for_display)
+from src.data_access.qc_requests.request_columns import (
+    AWAITING_PRODUCTION,
+    OPEN_STATES,
+    QC_COUPONS_COLUMN,
+    QC_REQUESTED_COLUMN,
+    AWAITING_QC,
+    DECLINED,
+    EXPIRED,
+    QC_STATUS_COLUMN,
+    SENT,
+    TO_BE_SENT,
+    state_label as request_label,
+)
 from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
@@ -48,10 +73,18 @@ from src.data_access.electrodes.electrode_columns import (
     PRIORITY_COLUMN,
     PRIORITY_FLAG,
     LOCKED_BY_COLUMN,
+    FAILED_CRACK,
+    FAILED_IC,
+    FAILURE_COLUMN,
     FINALISED_COLUMN,
     NEVER_STORED,
+    NOTHING_LEFT_TO_ASK,
     status_family,
 )
+
+# The statuses above as the frame spells them, since a row holds the text
+# rather than the enum.
+_NOTHING_LEFT = frozenset(str(status) for status in NOTHING_LEFT_TO_ASK)
 
 # Display text is separate from the contract: the keys are the stored column
 # names (dbo.MetaData), the values are what the operator sees. Relabel here —
@@ -65,6 +98,9 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     # column the frame does not carry.
     VAT_COLUMN: "Vat",
     STATUS_COLUMN: "Status",
+    # Between the verdict and when it settled: the request is what happens
+    # before an electrode has a verdict at all.
+    QC_STATUS_COLUMN: "QC request",
     FINALISED_COLUMN: "Status finalised",
 }
 
@@ -151,14 +187,69 @@ DONUT_DIAMETER = 212
 # That panel: the donut, the test-first list and the report button. Wide enough
 # for the ring and its legend, plus the scrollbar it gets on a short window, so
 # the ring never loses room to it.
-CHART_PANEL_WIDTH = 330 + SCROLLBAR_VERTICAL_WIDTH
+#
+# WIDE BECAUSE THE PULL LIST IS FOUR COLUMNS. The request state is held at its
+# longest wording so it does not jump about, 163px; the marking, the production
+# date and the request time take what they take; and the list's own scrollbar is
+# 35 of it. Below this the marking is squeezed to nothing. The main table pays,
+# and the quickest way to give it room back is to drop a column from the list.
+CHART_PANEL_WIDTH = 440 + SCROLLBAR_VERTICAL_WIDTH
+# What the panel may shrink and grow to once the pull list has measured itself.
+# The floor is what the donut and its legend need; the ceiling is so a long
+# request state cannot push the table off the screen.
+CHART_PANEL_MIN = 330 + SCROLLBAR_VERTICAL_WIDTH
+CHART_PANEL_MAX = 560 + SCROLLBAR_VERTICAL_WIDTH
 # Left, top, right, bottom. Shared by the part that scrolls and the part
 # pinned under it, so the two columns of content line up.
 PANEL_MARGINS = (14, 0, 5, 0)
-# About four rows and the header. Beyond that the pull list scrolls in
-# itself rather than pushing the breakdown off the top: it is pinned now,
-# so whatever height it claims is height the rest of the panel never sees.
-TEST_FIRST_MAX_HEIGHT = 240
+# How tall the pull list may get. Beyond it the list scrolls in itself rather
+# than pushing the breakdown off the top: it is pinned, so whatever height it
+# claims is height the rest of the panel never sees.
+#
+# WHAT IS LEFT AFTER THE BREAKDOWN, not a fixed number and not a share. A
+# fixed 240 was four rows whether the window was tall or short, which left a
+# tall screen with a short list under a large gap. A share of the panel instead
+# took height off the breakdown on a small screen, which is the thing the cap
+# was there to stop. So the breakdown is served first, at its own natural
+# height, and the list gets the rest.
+#
+# The floor is the old fixed height, so a small screen is never worse off than
+# it was; the ceiling stops a very tall window handing the list more rows than
+# anybody reads at once.
+TEST_FIRST_BREAKDOWN_ROOM = 470
+TEST_FIRST_MIN_HEIGHT = 240
+TEST_FIRST_MAX_HEIGHT = 440
+# What the pull list says where production has not been asked for one. The main
+# table draws a button there instead; this list is read only, so it says it.
+NOT_REQUESTED = "Not requested"
+# Shorter than the table's own rows: this one is scanned, not read. Four more
+# than it was, so the coupon icon has room to be read rather than guessed at.
+TEST_FIRST_ROW_HEIGHT = 28
+# The pull list's heading. Named rather than written out at each use: it was in
+# three places, two of them setting it to what it already said.
+# The quiet button the filter bar's "Clear all filters" wears, a point larger:
+# it sits beside a heading rather than among inputs, and at 12px it read as
+# part of the table underneath it. Last, so the size wins.
+# Tighter than the quiet style it is built on, which is written for a row of
+# buttons rather than for one squeezed between a figure and a table. Last, so
+# both the size and the padding win.
+COUPON_BUTTON_STYLE = QUIET_BUTTON_STYLE + """
+    QPushButton { font-size: 13px; padding: 3px 10px; }
+"""
+# Between the pinned blocks: the scrapped figure, the pull list, the report
+# button. Every pixel here is a pixel the chart above gives up to a scrollbar,
+# and these three read as one block rather than as three panels.
+# Left, top, right, bottom inside the tab's white card. Tighter at the top and
+# bottom than the shared default of 16, which on this tab is 32px taken off the
+# side panel before anything is drawn in it.
+CARD_PADDING = (16, 8, 16, 8)
+PINNED_GAP = 3
+# Between the Coupon Settings button and the list it governs. They belong
+# together, so it is the tightest gap in the panel.
+PULL_LIST_GAP = 2
+# What a cell costs around its text in the pull list: the delegate's margins
+# either side and a little slack so the longest state is not clipped.
+CELL_PADDING = 16
 
 
 def status_pill_style(value: str) -> PillStyle | None:
@@ -173,11 +264,51 @@ def status_pill_style(value: str) -> PillStyle | None:
             return style
     return None
 
+# What a QC request looks like in its column. The same vocabulary as the
+# status pills: an outline for something still moving, a filled badge for an
+# outcome. Amber for a question nobody has answered, blue for one pointed at
+# this application, teal for agreed, grey for closed.
+QC_PILL_STYLES: dict[str, PillStyle] = {
+    request_label(AWAITING_PRODUCTION): PillStyle(color="#B45309"),
+    request_label(AWAITING_QC): PillStyle(color="#1D4ED8", background="#DBEAFE"),
+    request_label(TO_BE_SENT): PillStyle(color="#0B7268", glyph="✓"),
+    request_label(SENT): PillStyle(
+        color="#0B7268", background="#0B7268", text="#FFFFFF", glyph="✓"),
+    request_label(DECLINED): PillStyle(color="#555B64"),
+    # Fainter than declined, and on purpose: nobody refused this one, it just
+    # ran out of anybody who could answer it.
+    request_label(EXPIRED): PillStyle(color="#94A3B8"),
+}
+
+# The longest of them, so the column is measured for its widest badge rather
+# than for whatever happens to be in the first thousand rows.
+WIDEST_QC_LABEL = max(QC_PILL_STYLES, key=len)
+
+
+def qc_pill_style(text: str) -> PillStyle | None:
+    """The badge for one QC request state, or None for a row with no request."""
+    return QC_PILL_STYLES.get(str(text).strip())
+
+
+# What the Failure filter offers. The two reasons a test can give, plus the
+# electrodes that failed and never had one written down, which is the only way
+# to find the ones somebody forgot to fill in.
+FAILURE_IC = "IC failed"
+FAILURE_CRACK = "Cracked"
+FAILURE_NONE = "No reason recorded"
+FAILURE_FILTER_CODES = {FAILURE_IC: FAILED_IC, FAILURE_CRACK: FAILED_CRACK}
+
 # Filter dropdown keys.
+FILTER_FAILURE = "failure"
+FILTER_QC_REQUEST = "qc_request"
 FILTER_STATUS = "status"
 FILTER_TYPE = "type"
 FILTER_RECIPE = "recipe"
 FILTER_VAT = "vat"
+
+# The QC request filter's first option. Most electrodes have no request, and
+# without this there is no way to ask for the ones that do not.
+QC_NONE = "No request"
 
 # The Vat filter's last option. The process log covers most electrodes but not
 # all, and without this the ones it misses can be seen but never picked out.
@@ -254,6 +385,28 @@ PILL_STYLES: dict[str, PillStyle] = {
 ONGOING_DOTS = ("", ".", "..", "...")
 ONGOING_TICK_MS = 320
 
+# The breath on anything waiting for QC to answer. Slow and shallow on purpose:
+# it runs all day beside somebody working, and a quick or deep one stops being
+# a signal and becomes a thing to look away from. One period is a calm breath;
+# the tick is just fast enough that the fade has no steps in it.
+# How often the table is repainted purely so the request window can expire
+# under it. The button's own test reads the clock on every paint, so the
+# decision is always current; what is not current is the pixels, and a row
+# nobody touches would keep a button it no longer offers until something else
+# happened to repaint it. Five minutes on a thirty day window is as fine as
+# anybody needs, and it costs one repaint of the rows actually on screen.
+WINDOW_TICK_MS = 5 * 60 * 1000
+
+PULSE_PERIOD_MS = 2600
+PULSE_TICK_MS = 60
+# How far a pull list row travels from its own background towards the blue.
+# Lighter than the badge's, because a whole row of it is a lot more colour than
+# a pill of it.
+PULSE_ROW_DEPTH = 0.22
+# The blue the offer badge is outlined in, so the row and the badge pulse in
+# one colour rather than two that nearly match.
+PULSE_BLUE = "#1D4ED8"
+
 # How long a row somebody else changed stays lit, and how often the wash is
 # stepped down. Long enough to catch the eye across the table, short enough
 # that it is gone before it becomes something to ignore.
@@ -321,12 +474,34 @@ class ElectrodesWidget(QWidget):
         on_data_saved=None,
         on_check_for_updates=None,
         on_status_override=None,
+        on_qc_request=None,
+        get_coupon_settings=None,
+        on_coupon_setting=None,
+        on_qc_answer=None,
+        get_request_window_days=None,
     ) -> None:
         super().__init__(parent)
         self.on_data_saved = on_data_saved
         self.on_check_for_updates = on_check_for_updates
         # ``(marking, status)``. There is no clearing one: see the button.
         self.on_status_override = on_status_override
+        # ``on_qc_request(marking) -> bool`` asks production for one electrode,
+        # ``on_qc_answer(marking, approve) -> bool`` answers one they offered.
+        # Absent, the column still shows requests and the buttons do nothing,
+        # which is what a test with no backend gets.
+        self._on_qc_request = on_qc_request
+        # ``get_coupon_settings() -> {reason: coupons}`` and
+        # ``on_coupon_setting(reason, coupons) -> bool``. Absent, the dialog
+        # opens on the defaults and saves nowhere, which is what a database
+        # without the coupon migration looks like.
+        self._get_coupon_settings = get_coupon_settings
+        self._on_coupon_setting = on_coupon_setting
+        self._on_qc_answer = on_qc_answer
+        # ``get_request_window_days() -> int``, how old an electrode may be
+        # and still be worth asking production for. Absent, or 0 or less,
+        # every row keeps its button, which is what a database with no
+        # expiry rule behaves like.
+        self._get_request_window_days = get_request_window_days
 
         self.table: DataTableWidget | None = None
         # Everything loaded, original column names — the truth the filters work
@@ -347,7 +522,8 @@ class ElectrodesWidget(QWidget):
     # ------------------------------------------------------------------
     def init_ui(self) -> None:
         """Title, filter bar, then the table filling the rest of the screen."""
-        main_layout, content_container, content_layout = create_styled_container_layout()
+        main_layout, content_container, content_layout = (
+            create_styled_container_layout(inner_margins=CARD_PADDING))
 
         title = QLabel("Electrodes")
         title_font = QFont()
@@ -368,10 +544,19 @@ class ElectrodesWidget(QWidget):
             FilterDropdown(FILTER_TYPE, "Type"),
             FilterDropdown(FILTER_RECIPE, "Recipe"),
             FilterDropdown(FILTER_VAT, "Vat"),
+            FilterDropdown(FILTER_QC_REQUEST, "QC request"),
+            FilterDropdown(FILTER_FAILURE, "Failure"),
         ], number_range="Electrode", stacked=True, with_clear=True,
            extra_date_range="Status finalised")
         self.filter_bar.set_options(
             FILTER_STATUS, [status_label(s) for s in ElectrodeStatus])
+        # Every state, plus the absence of one. Fixed rather than taken from
+        # the data: a state with nothing in it today is still worth being able
+        # to ask for, and the list is six long.
+        self.filter_bar.set_options(
+            FILTER_QC_REQUEST, [QC_NONE] + list(QC_PILL_STYLES))
+        self.filter_bar.set_options(
+            FILTER_FAILURE, [FAILURE_IC, FAILURE_CRACK, FAILURE_NONE])
         self.filter_bar.changed.connect(self._render)
         # On the filters' second row rather than a line of its own, and in with
         # them rather than at the right edge: out there it belonged to nothing,
@@ -403,7 +588,10 @@ class ElectrodesWidget(QWidget):
         self._fit_filter_height()
 
         self.table = DataTableWidget(
-            min_column_width=70,
+            # Low, because Vat and Recipes hold two or three characters and a
+            # 70px floor on those was pure empty space in a table that has to
+            # fit a small screen.
+            min_column_width=52,
             max_column_width=220,
             # Rows are coloured by status instead.
             enable_alternating_colors=False,
@@ -422,7 +610,20 @@ class ElectrodesWidget(QWidget):
         # Content-sized columns rather than an equal share of the width, since
         # most of these hold six characters. Any width left over is then handed
         # back out proportionally so the table still fills its pane.
-        self.table.set_uncapped_columns({COLUMN_DISPLAY_NAMES[STATUS_COLUMN]})
+        # Both sized to their content: the Status column holds a long wait and
+        # the QC request column holds a badge with two buttons beside it.
+        self.table.set_uncapped_columns({COLUMN_DISPLAY_NAMES[STATUS_COLUMN],
+                                         COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]})
+        # A timestamp is the same width on every row, so handing it a share of
+        # the spare only takes room from the columns that can use it.
+        # Every column its content, the slack to the one at the end. Shared out
+        # in proportion, as it was, the widest column grew the most and the
+        # narrow ones grew too, which is how the table ran off a small screen.
+        self.table.set_fill_last_only(True)
+        # And on a small screen, give width back rather than run off it.
+        self.table.set_shrink_to_fit(True)
+        self.table.set_no_growth_columns(
+            {COLUMN_DISPLAY_NAMES[str(ElectrodeColumns.DATE)]})
         self.table.set_fill_remaining_width(True)
         # A minimum of 0 means "use the size hint", and the hint includes the
         # header's own minimum plus the (deliberately thick) scrollbar — which
@@ -476,6 +677,23 @@ class ElectrodesWidget(QWidget):
         self._ongoing_timer.setInterval(ONGOING_TICK_MS)
         self._ongoing_timer.timeout.connect(self._advance_ongoing)
 
+        # A second animation, slower than the dots and with nothing in
+        # common with them: that one marches through frames of text, this one
+        # fades a colour. Sharing a timer would have tied the breath's speed to
+        # the dots' speed.
+        # Always running, unlike the animations: this one is not about
+        # anything on screen moving, it is about time passing while nothing
+        # does.
+        self._window_timer = QTimer(self)
+        self._window_timer.setInterval(WINDOW_TICK_MS)
+        self._window_timer.timeout.connect(self._age_out_request_buttons)
+        self._window_timer.start()
+
+        self._pulse_phase = 0.0
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(PULSE_TICK_MS)
+        self._pulse_timer.timeout.connect(self._advance_pulse)
+
         self._flasher = RowFlasher(self._row_highlight, self.table, self)
 
         self._shimmer_step = 0
@@ -498,10 +716,35 @@ class ElectrodesWidget(QWidget):
         self._pill_delegate = StatusPillDelegate(
             status_pill_style, self.table, right_gutter=32,
             widest_label=WIDEST_STATUS_LABEL, highlight=self._row_highlight,
-            width_text=ongoing_width_text, display_text=self._animated_status)
-        # Which column it is on, decided after every render rather than here.
+            width_text=ongoing_width_text, display_text=self._animated_status,
+            badges_for=self._failure_badges)
+        self._qc_delegate = RequestActionDelegate(
+            qc_pill_style, self.table,
+            answerable=request_label(AWAITING_QC),
+            coupons_for=self._coupons_of_row,
+            askable=self._worth_asking_for,
+            pulse=self._pulse_strength,
+            display_text=self._animated_request,
+            animated=request_label(TO_BE_SENT),
+            highlight=self._row_highlight)
+        self._qc_delegate.set_labels(QC_PILL_STYLES)
+        # Which column each is on, decided after every render rather than here.
         self._status_column: int | None = None
+        self._qc_column: int | None = None
+        self._side_panel: QWidget | None = None
+        # What each pull list row asks be cut, in the order the list shows them.
+        self._pull_coupons: list[str] = []
+        # And their states, in the same order, for the rows that are bolded.
+        self._pull_states: list[str] = []
+        # Whether the cursor was over one of the request buttons last time it
+        # moved, so the cell it has just left gets repainted back to resting.
+        self._qc_hovering = False
         self.table.cellClicked.connect(self._on_cell_clicked)
+        # The ask button is drawn asleep and wakes under the cursor, which the
+        # delegate reads as State_MouseOver. The view only tracks that with
+        # hover turned on for the viewport.
+        self.table.setMouseTracking(True)
+        self.table.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
         # Status ratio of whatever the filters currently show, beside the table.
         self.status_chart = StatusDonutWidget(
@@ -561,7 +804,7 @@ class ElectrodesWidget(QWidget):
         pinned = QWidget()
         pinned_layout = QVBoxLayout()
         pinned_layout.setContentsMargins(*PANEL_MARGINS)
-        pinned_layout.setSpacing(8)
+        pinned_layout.setSpacing(PINNED_GAP)
         # Scrapped is pinned too. It was asked for as a number that is on
         # screen whatever the filters say, and in the scrolling half it was
         # only on screen when the window happened to be tall enough.
@@ -578,9 +821,12 @@ class ElectrodesWidget(QWidget):
 
         side_panel = QWidget()
         side_panel.setFixedWidth(CHART_PANEL_WIDTH)
+        # Kept, because the pull list resizes it to whatever its columns need.
+        self._side_panel = side_panel
         side_layout = QVBoxLayout()
         side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(8)
+        # Between the breakdown that scrolls and the block pinned under it.
+        side_layout.setSpacing(PINNED_GAP)
         side_layout.addWidget(chart_scroll, 1)
         side_layout.addWidget(pinned, 0)
         side_panel.setLayout(side_layout)
@@ -590,9 +836,15 @@ class ElectrodesWidget(QWidget):
         # that is the height the donut and the pull list were short of. The
         # search box and the count move with them, which is no loss: they
         # describe the table, which is what they now sit above.
+        # THE TITLE SITS OVER THE TABLE TOO, for the same reason the filters
+        # do. Spanning the window it left a band of empty white the width of
+        # the side panel and the height of a heading, directly above the donut,
+        # and the panel is the one column on this tab that is short of height.
         left_column = QVBoxLayout()
         left_column.setContentsMargins(0, 0, 0, 0)
         left_column.setSpacing(0)
+        left_column.addLayout(toolbar, 0)
+        left_column.addSpacing(4)
         left_column.addWidget(filter_scroll, 0)
         left_column.addSpacing(4)
         left_column.addWidget(self.table, 1)
@@ -603,8 +855,6 @@ class ElectrodesWidget(QWidget):
         body.addLayout(left_column, 1)
         body.addWidget(side_panel, 0)
 
-        content_layout.addLayout(toolbar, 0)
-        content_layout.addSpacing(4)
         content_layout.addLayout(body, 1)
         content_container.setLayout(content_layout)
 
@@ -771,6 +1021,32 @@ class ElectrodesWidget(QWidget):
             wanted = {status_value(s) for s in statuses}
             mask &= df[STATUS_COLUMN].astype(str).str.strip().isin(wanted)
 
+        wanted_qc = self.filter_bar.values(FILTER_QC_REQUEST)
+        if wanted_qc and QC_STATUS_COLUMN in df.columns:
+            # The column already holds the label, so no mapping back: what is
+            # ticked is what is in the cell, with the blank standing for the
+            # electrodes nobody has asked about.
+            chosen = {"" if value == QC_NONE else value for value in wanted_qc}
+            mask &= df[QC_STATUS_COLUMN].astype(str).str.strip().isin(chosen)
+
+        failures = self.filter_bar.values(FILTER_FAILURE)
+        if failures and FAILURE_COLUMN in df.columns:
+            # Either, not both: ticking two reasons asks for the electrodes
+            # that gave one OR the other, the same as every other dropdown
+            # here. An electrode with both is in either answer.
+            codes = df[FAILURE_COLUMN].astype(str).str.strip()
+            wanted = pd.Series(False, index=df.index)
+            for label in failures:
+                code = FAILURE_FILTER_CODES.get(label)
+                if code:
+                    wanted |= codes.str.split(",").apply(lambda got: code in got)
+                elif label == FAILURE_NONE and STATUS_COLUMN in df.columns:
+                    # Failed on a rig, and nobody wrote down what went wrong.
+                    wanted |= ((codes == "")
+                               & (df[STATUS_COLUMN].astype(str).str.strip()
+                                  == str(ElectrodeStatus.TESTED_AND_SCRAPPED)))
+            mask &= wanted
+
         types = self.filter_bar.values(FILTER_TYPE)
         type_column = str(ElectrodeColumns.FULL_NAME)
         if types and type_column in df.columns:
@@ -892,9 +1168,11 @@ class ElectrodesWidget(QWidget):
         except Exception as e:
             print(f"Error loading electrodes table: {e}")
         self._place_status_delegate()
+        self._place_qc_delegate()
         self._place_vat_delegate()
         self._sync_picked_row()
         self._sync_ongoing_timer()
+        self._sync_pulse_timer()
 
     # ------------------------------------------------------------------
     # Row styling
@@ -921,13 +1199,6 @@ class ElectrodesWidget(QWidget):
 
     def _build_test_first_panel(self) -> QWidget:
         """The pull-list: which electrodes to take to SEM/IC first."""
-        self.test_first_heading = QLabel("Electrodes to be tested first")
-        heading_font = QFont()
-        heading_font.setPointSize(11)
-        heading_font.setBold(True)
-        self.test_first_heading.setFont(heading_font)
-        self.test_first_heading.setStyleSheet("color: #1F1F1F;")
-
         self.test_first_table = DataTableWidget(
             min_column_width=70,
             max_column_width=200,
@@ -936,25 +1207,79 @@ class ElectrodesWidget(QWidget):
             min_table_height=90,
             scroll_to_top_on_load=True,
         )
-        self.test_first_table.setStyleSheet(TABLE_STYLE)
+        self.test_first_table.setStyleSheet(PULL_LIST_TABLE_STYLE)
         self.test_first_table.setFrameShape(QFrame.Shape.NoFrame)
         self.test_first_table.setSelectionMode(
             self.test_first_table.SelectionMode.NoSelection)
         self.test_first_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Never sideways. The columns are sized to fit and the panel to them, so
+        # a horizontal scrollbar here would only ever be a rounding error made
+        # visible.
+        self.test_first_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Shadows the class default on this instance alone. It is a list to run
+        # an eye down, not a table to read, so it holds nine rows in the height
+        # the full size ones took for six.
+        self.test_first_table.BASE_ROW_HEIGHT = TEST_FIRST_ROW_HEIGHT
+        # One click goes to that electrode in the table beside it. The pull list
+        # is built from what the filters already show, so the row is always
+        # there to jump to.
+        self.test_first_table.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.test_first_table.cellClicked.connect(self._jump_from_pull_list)
+        self._pull_delegate = CouponTextDelegate(self._pull_coupons_of_row,
+                                                 self.test_first_table,
+                                                 fill_for=self._pull_row_tint)
+        # Every other column of the list, so a row breathes across its whole
+        # width rather than only where the coupon delegate reaches.
+        self.test_first_table.setItemDelegate(
+            RowTintDelegate(self._pull_row_tint, self.test_first_table))
         self.test_first_table.verticalHeader().setVisible(False)
         self.test_first_table.set_columns_fill(True)
         self.test_first_table.setMinimumWidth(120)
+        # The absolute ceiling; the share of the panel is worked out on
+        # every fit, once the panel has a height to take a share of.
         self.test_first_table.setMaximumHeight(TEST_FIRST_MAX_HEIGHT)
         self.test_first_table.setMinimumHeight(0)
+
+        # Beside the heading, because it governs what this list contains: a
+        # failure QC wants nothing from puts no electrodes in it.
+        self.coupon_settings_button = QPushButton("Coupon Settings")
+        self.coupon_settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.coupon_settings_button.setStyleSheet(COUPON_BUTTON_STYLE)
+        self.coupon_settings_button.clicked.connect(self._open_coupon_settings)
+
+        # NO HEADING. The list is getting a new purpose, and a title naming the
+        # old one would be the first thing read and the last thing changed.
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(10)
+        title_row.addStretch(1)
+        title_row.addWidget(self.coupon_settings_button, 0)
 
         panel = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        layout.addWidget(self.test_first_heading, 0)
+        layout.setSpacing(PULL_LIST_GAP)
+        layout.addLayout(title_row)
         layout.addWidget(self.test_first_table, 1)
         panel.setLayout(layout)
         return panel
+
+    def _open_coupon_settings(self) -> None:
+        """What QC wants cut, per reason. Saved one setting at a time.
+
+        The tab is handed the two callables, as always. Without them the dialog
+        still opens and shows the defaults, which is what a database that has
+        not had the migration looks like.
+        """
+        settings = (self._get_coupon_settings() if self._get_coupon_settings
+                    else {})
+        dialog = CouponSettingsDialog(self, settings=settings,
+                                      on_save=self._on_coupon_setting)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # The statuses are computed from these, so the screen has to be
+            # rebuilt rather than merely repainted.
+            self.check_for_external_updates()
 
     def _update_test_first_table(self) -> None:
         """Fill the pull-list from whatever the filters currently show."""
@@ -966,28 +1291,266 @@ class ElectrodesWidget(QWidget):
         visible = self.df_visible
         if visible is None or visible.empty or PRIORITY_COLUMN not in visible.columns:
             self.test_first_table.load_data(pd.DataFrame())
-            self.test_first_heading.setText("Electrodes to be tested first")
             return
 
-        flagged = visible[visible[PRIORITY_COLUMN].astype(str).str.strip() == PRIORITY_FLAG]
-        self.test_first_heading.setText(f"Electrodes to be tested first")
+        flagged = self._in_answer_order(visible[self._still_going_on(visible)])
         if flagged.empty:
             self.test_first_table.load_data(pd.DataFrame())
             return
 
-        self.test_first_table.load_data(pd.DataFrame({
+        # NO TYPE COLUMN. It is the same for every row in practice and it is on
+        # the electrode's own row in the table beside this, which is now one
+        # click away.
+        columns = {
             "Electrode": flagged[str(ElectrodeColumns.MARKING)].astype(str).values,
-            "Type": flagged[str(ElectrodeColumns.FULL_NAME)].astype(str).values,
-            "Date": flagged[str(ElectrodeColumns.DATE)].map(
-                format_utc_timestamp_for_display).values,
-        }))
+        }
+        # TO THE MINUTE, unlike Produced. Requests arrive in bursts, several
+        # within one finalise, so the day alone would show a column of one
+        # repeated date and say nothing about the order they came in.
+        if QC_REQUESTED_COLUMN in flagged.columns:
+            columns["Requested"] = flagged[QC_REQUESTED_COLUMN].map(
+                format_utc_timestamp_for_display).values
+        # Feature by presence: a database without the qc_requests schema returns
+        # no such column, and the list reads as it always did.
+        #
+        # SPELT OUT WHEN THERE IS NO REQUEST, rather than left blank. These are
+        # the electrodes a failure says to pull next, and one nobody has asked
+        # production for is the gap worth seeing. The flags frozen before the
+        # requests existed are all in exactly that state.
+        if QC_STATUS_COLUMN in flagged.columns:
+            asked = flagged[QC_STATUS_COLUMN].astype(str).str.strip()
+            columns[COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]] = asked.where(
+                asked != "", NOT_REQUESTED).values
+        # Kept per row rather than put in a column of its own: the icon is
+        # painted in front of the state, which is where it reads.
+        self._pull_coupons = (
+            list(flagged[QC_COUPONS_COLUMN].astype(str).str.strip())
+            if QC_COUPONS_COLUMN in flagged.columns else [])
+        # And the states, for the one row shape that is emphasised.
+        self._pull_states = (list(asked) if QC_STATUS_COLUMN in flagged.columns
+                             else [])
+        self.test_first_table.load_data(
+            pd.DataFrame(columns), cell_style_callback=self._pull_cell_style)
+        self._fit_test_first_columns()
+        self._place_pull_coupon_delegate()
+
+    def _jump_from_pull_list(self, row: int, _column: int) -> None:
+        """Go to the electrode this row names, in the table beside the list.
+
+        The list says which to fetch next and the table is where everything
+        about it is, so the two were being read side by side with the marking
+        carried across by eye. Any column jumps: the whole row is the target.
+        """
+        item = self.test_first_table.item(row, 0)
+        if item is None:
+            return
+        self._jump_to_marking(item.text().strip())
+
+    def _jump_to_marking(self, marking: str) -> None:
+        """Centre that electrode in the main table and pick it out.
+
+        Centred rather than put under the top edge, which is what restoring the
+        scroll position does: this is an answer to a click, and an answer in the
+        middle of the screen is one the eye finds without hunting the edges.
+        """
+        if not marking or self.table is None or self.df_visible is None:
+            return
+        column = str(ElectrodeColumns.MARKING)
+        if column not in self.df_visible.columns:
+            return
+        # By position, not by index label: the row number in the table is the
+        # position in the frame, which an index that has been filtered is not.
+        markings = self.df_visible[column].astype(str).str.strip().tolist()
+        if marking not in markings:
+            return
+        row = markings.index(marking)
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        self.table.scrollToItem(item, self.table.ScrollHint.PositionAtCenter)
+        # Picked, not selected: this table has selection turned off and marks
+        # its rows with a painted outline instead. Held by marking, so the
+        # outline follows the electrode through a filter or a reload rather
+        # than staying on whatever row number it had.
+        self._picked_marking = marking
+        self._sync_picked_row()
+        self.table.viewport().update()
+
+    @staticmethod
+    def _in_answer_order(flagged):
+        """Whoever is waiting on QC first, then whoever QC is waiting on.
+
+        An offer is the only row here that nobody can act on until QC answers
+        it, so it goes to the top. Then Pending, which production has agreed to
+        and not yet sent, then Requested, which it has not answered. Anything
+        with no request at all is last: it is waiting on the sweep rather than
+        on a person.
+
+        A stable sort, so inside each group the list keeps the order it had,
+        which is newest electrode first.
+        """
+        if flagged.empty or QC_STATUS_COLUMN not in flagged.columns:
+            return flagged
+        rank = {request_label(state): order for order, state in
+                enumerate((AWAITING_QC, TO_BE_SENT, AWAITING_PRODUCTION))}
+        asked = flagged[QC_STATUS_COLUMN].astype(str).str.strip()
+        return flagged.assign(
+            _rank=asked.map(lambda label: rank.get(label, len(rank)))
+        ).sort_values("_rank", kind="stable").drop(columns="_rank")
+
+    @staticmethod
+    def _still_going_on(visible) -> "pd.Series":
+        """Which rows the panel lists: the ones somebody is still waiting on.
+
+        A request that is open, whichever side has it, and an electrode a
+        failure says to test that nobody has asked for yet. Both are work in
+        flight.
+
+        DECLINED AND SENT DROP OUT, even on a flagged electrode. Both are final:
+        production has answered, and a list of what is going on that keeps
+        showing answered questions stops being read.
+        """
+        open_now = {request_label(state) for state in OPEN_STATES}
+        asked = (visible[QC_STATUS_COLUMN].astype(str).str.strip()
+                 if QC_STATUS_COLUMN in visible.columns
+                 else pd.Series("", index=visible.index))
+        flagged = (visible[PRIORITY_COLUMN].astype(str).str.strip()
+                   == PRIORITY_FLAG)
+        return asked.isin(open_now) | (flagged & (asked == ""))
+
+    def _place_pull_coupon_delegate(self) -> None:
+        """Draw the coupon icon in the pull list's request column."""
+        table = self.test_first_table
+        wanted = COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]
+        for column in range(table.columnCount()):
+            header = table.horizontalHeaderItem(column)
+            if header is not None and header.text() == wanted:
+                table.setItemDelegateForColumn(column, self._pull_delegate)
+                return
+
+    def _pull_cell_style(self, row: int, _column: str, _value):
+        """Bold the whole row where the next move is QC's.
+
+        Offered to QC is the only shape on this list that somebody here has to
+        answer: the rest are waiting on production. The list is read in a
+        hurry, so the rows that need an answer are the ones that have to be
+        seen first, and weight says that faster than a colour would in a panel
+        that is already carrying a badge and an icon.
+        """
+        offered = request_label(AWAITING_QC)
+        if 0 <= row < len(self._pull_states) and self._pull_states[row] == offered:
+            return CellStyle(bold=True)
+        return None
+
+    def _pull_coupons_of_row(self, row: int) -> str:
+        """What the pull list row at this index asks be cut."""
+        return (self._pull_coupons[row]
+                if 0 <= row < len(self._pull_coupons) else "")
+
+    def _fit_test_first_columns(self) -> None:
+        """Hold the request column at its longest state, share the rest equally.
+
+        The table splits its width evenly, which suited three short columns and
+        does not once a request state is among them: an even quarter elided
+        every one of them. Sized from the labels rather than from a number, so
+        a wording change cannot quietly start clipping them.
+        """
+        table = self.test_first_table
+        header = table.horizontalHeader()
+        last = header.count() - 1
+        heading = table.horizontalHeaderItem(last)
+        if last < 1 or heading is None:
+            return
+        if heading.text() != COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]:
+            return
+        # SIZED BY QT, NOT BY OUR OWN METRICS. The table's stylesheet paints its
+        # items a point larger than table.font() reports, so measuring the text
+        # here came out short and the dates were clipped on screen. Qt's own hint
+        # asks the items, so it is right whatever the stylesheet and the screen
+        # scaling say.
+        #
+        # EVERY COLUMN TO ITS CONTENT, and then the panel to their sum. The
+        # panel used to be a fixed width, so whatever the columns did not use
+        # had to go somewhere and one of them was always fat: first the
+        # marking, then the request state. Fitting the panel to the table
+        # instead leaves no slack to hand out, and it holds whatever the font
+        # and the screen's scaling turn out to be, which a number here cannot.
+        for index in range(last + 1):
+            header.setSectionResizeMode(index, QHeaderView.ResizeMode.Fixed)
+            # The wider of the cells and the heading. sizeHintForColumn asks
+            # the items only, so a column of six character markings came out
+            # narrower than the word Electrode above it and clipped its own
+            # heading.
+            table.setColumnWidth(index, max(table.sizeHintForColumn(index),
+                                            header.sectionSizeHint(index)))
+        # The request column is held at its longest wording rather than at what
+        # is on screen now, so the panel does not breathe in and out as states
+        # change under it.
+        table.setColumnWidth(last, max(table.columnWidth(last),
+                                       self._request_column_width(last)))
+        self._fit_panel_to_list()
+
+    def _fit_panel_to_list(self) -> None:
+        """Make the side panel as wide as the pull list needs, and no wider.
+
+        Clamped at both ends: the donut and its legend live in the same panel
+        and have their own minimum, and a long request state must not be able
+        to push the table off the screen.
+        """
+        table = self.test_first_table
+        if self._side_panel is None or not table.columnCount():
+            return
+        columns = sum(table.columnWidth(index)
+                      for index in range(table.columnCount()))
+        # Plus a few pixels: fitted to the exact sum, Qt's own rounding was
+        # enough to overflow by one and hang a horizontal scrollbar under a
+        # table that fits.
+        wanted = (columns + SCROLLBAR_VERTICAL_WIDTH + PANEL_MARGINS[0]
+                  + PANEL_MARGINS[2] + 6)
+        width = max(CHART_PANEL_MIN, min(CHART_PANEL_MAX, wanted))
+        if self._side_panel.width() != width:
+            self._side_panel.setFixedWidth(width)
+
+    def _request_column_width(self, index: int) -> int:
+        """Wide enough for the longest state, not just the ones on screen now.
+
+        Held at the longest wording so the column does not jump about as states
+        change under it. Scaled from Qt's hint for what is there rather than
+        measured outright, because a ratio of two text widths survives the
+        stylesheet's font and the screen's scaling, and an absolute measurement
+        in this module does not.
+        """
+        table = self.test_first_table
+        metrics = QFontMetrics(table.font())
+        shown = [table.horizontalHeaderItem(index).text()]
+        shown += [table.item(row, index).text()
+                  for row in range(table.rowCount())
+                  if table.item(row, index) is not None]
+        here = max(metrics.horizontalAdvance(text) for text in shown)
+        # The ones this list can show, not every state there is. Sent and
+        # declined never appear here, so holding the column wide enough for
+        # them would spend pixels on words it cannot draw.
+        can_show = [request_label(state) for state in OPEN_STATES]
+        longest = max(metrics.horizontalAdvance(text) for text in
+                      (*can_show, NOT_REQUESTED, shown[0]))
+        hint = table.sizeHintForColumn(index)
+        wanted = hint if here <= 0 else max(hint, round(hint * longest / here))
+        # Plus the coupon icon, which is painted in front of the text and which
+        # the hint knows nothing about: Qt measured the words alone.
+        return wanted + CouponTextDelegate.EXTRA
 
     def _fit_test_first_table(self) -> None:
-        """Give the pull list the height its rows need, and no more.
+        """Give the pull list the height its rows need, within its own band.
 
-        It is pinned under the breakdown now, so every pixel it reserves is a
-        pixel the donut and its legend do not get. One flagged electrode asked
-        for six rows of empty table and the legend was cut off to pay for it.
+        It is pinned under the breakdown, so every pixel it reserves is a pixel
+        the donut and its legend do not get, and a long list is capped rather
+        than cutting the legend off.
+
+        THE FLOOR IS NOT NEGOTIABLE, though. Sized to three rows the list came
+        out shorter than its own header and read as a scrap of table, with the
+        room it had just left blank above it. A block of a known size is read
+        at a glance on any screen; a block that changes height with its
+        contents has to be found first.
         """
         table = self.test_first_table
         if table is None:
@@ -997,7 +1560,20 @@ class ElectrodesWidget(QWidget):
         row_height = table.rowHeight(0) or table.BASE_ROW_HEIGHT
         header = table.horizontalHeader().height()
         wanted = header + max(1, table.rowCount()) * row_height + 4
-        table.setFixedHeight(min(TEST_FIRST_MAX_HEIGHT, wanted))
+        table.setFixedHeight(max(TEST_FIRST_MIN_HEIGHT,
+                                 min(self._pull_list_ceiling(), wanted)))
+
+    def _pull_list_ceiling(self) -> int:
+        """The tallest the pull list may be on this window.
+
+        Measured off the panel it sits in rather than the window, since that is
+        what it actually competes with for height.
+        """
+        panel = self._side_panel
+        room = panel.height() if panel is not None else 0
+        left_over = room - TEST_FIRST_BREAKDOWN_ROOM
+        return max(TEST_FIRST_MIN_HEIGHT,
+                   min(TEST_FIRST_MAX_HEIGHT, left_over))
 
     def statuses_in_scope(self) -> list[str]:
         """The stored statuses the report and the chart should cover.
@@ -1176,12 +1752,13 @@ class ElectrodesWidget(QWidget):
             self.load_data(dataframe)
             return
 
-        # A board move changes the test-first flags, the lock owner and when
-        # the status settled as well as the status itself, so all four are
-        # diffed and adopted together. Leaving one out kept a stale cell: the
-        # backend recomputed it and the patch threw the new value away.
-        tracked = [c for c in (STATUS_COLUMN, PRIORITY_COLUMN, LOCKED_BY_COLUMN,
-                               FINALISED_COLUMN)
+        # Every column the processor works out, diffed and adopted together.
+        # Leaving one out keeps a stale cell: the backend recomputes it and the
+        # patch throws the new value away. That happened with the finalised
+        # date, then the QC request state, then the coupons, so the list is no
+        # longer written out here. It comes from the processor, which is what
+        # computes them, and the two cannot drift apart again.
+        tracked = [c for c in DERIVED_COLUMNS
                    if c in dataframe.columns and c in self.df_source.columns]
         differs = None
         for column in tracked:
@@ -1219,6 +1796,7 @@ class ElectrodesWidget(QWidget):
         if flash:
             self.flash_markings(moved)
         self._sync_ongoing_timer()
+        self._sync_pulse_timer()
 
         self._update_status_chart()
         self._update_test_first_table()
@@ -1259,6 +1837,106 @@ class ElectrodesWidget(QWidget):
         self._status_column = found
         if found is not None:
             self.table.setItemDelegateForColumn(found, self._pill_delegate)
+
+    def _qc_action_clicked(self, row: int, column: int) -> bool:
+        """Handle a click in the QC request column. True if it was one of ours.
+
+        Worked out from where the click landed rather than from a widget per
+        row: there are thirteen thousand rows and three buttons on screen.
+        """
+        if column != self._qc_column or self.df_visible is None:
+            return False
+        if not 0 <= row < len(self.df_visible):
+            return False
+        item = self.table.item(row, column)
+        text = item.text() if item is not None else ""
+        where = self.table.visualItemRect(item) if item is not None else None
+        if where is None:
+            return False
+        point = self.table.viewport().mapFromGlobal(QCursor.pos())
+        action = self._qc_delegate.action_at(QRectF(where), QPointF(point), text,
+                                            self._coupons_of_row(row), row=row)
+        if not action:
+            return False
+
+        marking = str(self.df_visible.iloc[row][str(ElectrodeColumns.MARKING)]).strip()
+        if action == RequestActionDelegate.REQUEST:
+            self._ask_for_qc(marking)
+        else:
+            self._answer_offer(marking,
+                               action == RequestActionDelegate.APPROVE)
+        return True
+
+    def _ask_for_qc(self, marking: str) -> None:
+        """Ask production to send one electrode, after confirming.
+
+        ASKED HERE, not taken from a setting. The three settings cover the
+        requests this application raises on its own; a hand raised one is
+        somebody deciding about this electrode in particular, so they say what
+        they want from it in the same breath.
+        """
+        if self._on_qc_request is None:
+            return
+        agreed, coupons = ask_with_coupons(
+            self, "QC request", f"Request {marking} for QC?",
+            confirm_text="Request")
+        if not agreed:
+            return
+        if not self._on_qc_request(marking, coupons):
+            self._say_it_failed(marking)
+
+    def _answer_offer(self, marking: str, approve: bool) -> None:
+        """Accept or turn down an electrode production offered."""
+        if self._on_qc_answer is None:
+            return
+        what = "Accept" if approve else "Turn down"
+        # Named for what it is, the same way the request side reads. "Accept
+        # B15778?" left the operator to remember what they were accepting.
+        #
+        # Accepting also asks what to cut: the offer arrived with nothing
+        # recorded, because production proposes the electrode and QC decides
+        # what it wants from it. Turning one down asks nothing.
+        if approve:
+            agreed, coupons = ask_with_coupons(
+                self, "QC request", f"{what} {marking} for QC?",
+                confirm_text=what)
+        else:
+            agreed, coupons = ask(self, "QC request",
+                                  f"{what} {marking} for QC?",
+                                  confirm_text=what, danger=True), ""
+        if not agreed:
+            return
+        if not self._on_qc_answer(marking, approve, coupons):
+            self._say_it_failed(marking)
+
+    def _say_it_failed(self, marking: str) -> None:
+        """Nothing changed, and saying nothing would read as it having worked.
+
+        The usual cause is somebody else getting there first: one row per
+        electrode, ever, so a request raised on another machine a moment ago
+        means this one does nothing.
+        """
+        WarningDialog(self, title="QC request",
+                      message=f"Nothing changed for {marking}. Somebody may "
+                              f"have got there first.",
+                      icon="!", header_color="#B45309").exec()
+
+    def _place_qc_delegate(self) -> None:
+        """Put the request badge on whichever column the QC request ended up in.
+
+        Same reasoning as the status one: the Vat column comes and goes, so
+        the index is not fixed.
+        """
+        if self.table is None:
+            return
+        found = self._column_of(COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN])
+        if found == self._qc_column:
+            return
+        if self._qc_column is not None:
+            self.table.setItemDelegateForColumn(self._qc_column, None)
+        self._qc_column = found
+        if found is not None:
+            self.table.setItemDelegateForColumn(found, self._qc_delegate)
 
     def _column_of(self, header: str) -> int | None:
         """The column carrying this header, or None when it is not shown."""
@@ -1331,11 +2009,87 @@ class ElectrodesWidget(QWidget):
             return
         self._flasher.flash(rows)
 
+    def _age_out_request_buttons(self) -> None:
+        """Repaint, so an electrode that has just passed the window loses its
+        button without waiting for somebody to scroll past it."""
+        if self.table is not None:
+            self.table.viewport().update()
+
+    def _advance_pulse(self) -> None:
+        """Next instant of the breath, and repaint whatever is drawing it."""
+        self._pulse_phase = (self._pulse_phase
+                             + PULSE_TICK_MS / PULSE_PERIOD_MS) % 1.0
+        if self.table is not None:
+            self.table.viewport().update()
+        if self.test_first_table is not None:
+            self.test_first_table.viewport().update()
+
+    def _pulse_strength(self) -> float:
+        """Where the breath is now, 0 at rest and 1 at the top.
+
+        A cosine rather than a sawtooth: it slows at both ends, which is what
+        makes it read as breathing instead of as flashing.
+        """
+        return (1.0 - math.cos(2.0 * math.pi * self._pulse_phase)) / 2.0
+
+    def _pull_row_tint(self, row: int):
+        """The breathing colour behind a pull list row, or None for a still one.
+
+        Only the rows waiting on an answer from here. Blended from the row's
+        own background so the alternating stripes still show through, which
+        keeps the list readable as a list while one of its rows is moving.
+        """
+        offered = request_label(AWAITING_QC)
+        if not (0 <= row < len(self._pull_states)
+                and self._pull_states[row] == offered):
+            return None
+        table = self.test_first_table
+        base = (table.palette().alternateBase().color() if row % 2
+                else table.palette().base().color())
+        return blend(base.name(), PULSE_BLUE,
+                     PULSE_ROW_DEPTH * self._pulse_strength())
+
+    def _sync_pulse_timer(self) -> None:
+        """Run the breath only while something is actually waiting on QC.
+
+        Nothing offered means nothing to notice, and a timer repainting two
+        tables forty times a second for no reason is a laptop fan.
+        """
+        showing = self._any_row_is(QC_STATUS_COLUMN, request_label(AWAITING_QC))
+        if showing and not self._pulse_timer.isActive():
+            self._pulse_timer.start()
+        elif not showing and self._pulse_timer.isActive():
+            self._pulse_timer.stop()
+            self._pulse_phase = 0.0
+            if self.table is not None:
+                self.table.viewport().update()
+            if self.test_first_table is not None:
+                self.test_first_table.viewport().update()
+
     def _advance_ongoing(self) -> None:
         """Next frame of the dots, and repaint the rows showing them."""
         self._ongoing_frame = (self._ongoing_frame + 1) % len(ONGOING_DOTS)
         if self.table is not None:
             self.table.viewport().update()
+
+    def _any_row_is(self, column: str, value: str) -> bool:
+        """Whether any visible row holds that value in that column."""
+        frame = self.df_visible
+        if frame is None or column not in frame.columns:
+            return False
+        return bool((frame[column].astype(str).str.strip() == value).any())
+
+    def _dots(self) -> str:
+        """This frame of the marching dots, shared by every animated badge."""
+        return ONGOING_DOTS[self._ongoing_frame]
+
+    def _animated_request(self, label: str) -> str:
+        """The QC request badge's text this instant: Pending grows its dots."""
+        text = str(label).strip()
+        base = request_label(TO_BE_SENT)
+        if text != base:
+            return label
+        return base + self._dots()
 
     def _ongoing_text(self) -> str:
         """"Test ongoing" with this frame's dots after it."""
@@ -1343,11 +2097,15 @@ class ElectrodesWidget(QWidget):
                 + ONGOING_DOTS[self._ongoing_frame])
 
     def _sync_ongoing_timer(self) -> None:
-        """Run the animation only when something on screen is being tested."""
-        showing = (self.df_visible is not None
-                   and STATUS_COLUMN in self.df_visible.columns
-                   and (self.df_visible[STATUS_COLUMN].astype(str).str.strip()
-                        == str(ElectrodeStatus.TEST_ONGOING)).any())
+        """Run the animation only while something on screen is still moving.
+
+        Two badges use it now: an electrode being tested, and a request QC has
+        agreed to that production has not sent yet. Both mean the same thing to
+        an operator, that this row is waiting on somebody, and the dots are what
+        says so without a column for it.
+        """
+        showing = self._any_row_is(STATUS_COLUMN,
+                                   str(ElectrodeStatus.TEST_ONGOING)) or             self._any_row_is(QC_STATUS_COLUMN, request_label(TO_BE_SENT))
         if showing and not self._ongoing_timer.isActive():
             self._ongoing_timer.start()
         elif not showing and self._ongoing_timer.isActive():
@@ -1371,6 +2129,13 @@ class ElectrodesWidget(QWidget):
         return format_utc_timestamp_for_display(
             self.df_visible.iloc[row_index][FINALISED_COLUMN])
 
+    def _qc_display(self, row_index: int) -> str:
+        """The QC request cell's text, which the frame already holds as a label."""
+        if (self.df_visible is None or row_index >= len(self.df_visible)
+                or QC_STATUS_COLUMN not in self.df_visible.columns):
+            return ""
+        return str(self.df_visible.iloc[row_index][QC_STATUS_COLUMN])
+
     def _repaint_row(self, row_index: int) -> None:
         """Rewrite one rendered row's status text and tint, in place."""
         if self.table is None or row_index >= self.table.rowCount():
@@ -1379,7 +2144,8 @@ class ElectrodesWidget(QWidget):
         # the finalise time too, and repainting the status alone left that
         # showing until the next full reload.
         rewrite = {COLUMN_DISPLAY_NAMES[STATUS_COLUMN]: self._status_display,
-                   COLUMN_DISPLAY_NAMES[FINALISED_COLUMN]: self._finalised_display}
+                   COLUMN_DISPLAY_NAMES[FINALISED_COLUMN]: self._finalised_display,
+                   COLUMN_DISPLAY_NAMES[QC_STATUS_COLUMN]: self._qc_display}
         for column in range(self.table.columnCount()):
             item = self.table.item(row_index, column)
             if item is None:
@@ -1395,12 +2161,47 @@ class ElectrodesWidget(QWidget):
         """The full source DataFrame (original column names, unfiltered)."""
         return self.df_source if self.df_source is not None else pd.DataFrame()
 
+    def _point_at_qc_buttons(self, event) -> None:
+        """A pointing hand over the QC request buttons, an arrow everywhere else.
+
+        The badges are painted, not widgets, so nothing else tells an operator
+        the tick and the cross can be pressed. The cursor is what everyone
+        already reads a button by, and it costs one hit test per move.
+        """
+        viewport = self.table.viewport()
+        point = event.position().toPoint()
+        index = self.table.indexAt(point)
+        over = False
+        cell = None
+        if index.isValid() and index.column() == self._qc_column:
+            item = self.table.item(index.row(), index.column())
+            if item is not None:
+                cell = self.table.visualItemRect(item)
+                over = bool(self._qc_delegate.action_at(
+                    QRectF(cell), QPointF(point), item.text(),
+                    self._coupons_of_row(index.row()), row=index.row()))
+        wanted = (Qt.CursorShape.PointingHandCursor if over
+                  else Qt.CursorShape.ArrowCursor)
+        if viewport.cursor().shape() != wanted:
+            viewport.setCursor(wanted)
+        # The discs light up from the cursor position, which Qt does not repaint
+        # for on its own: hover is a per-cell flag and both buttons share a cell.
+        # Repainting the cell under the cursor is enough while there is one; the
+        # whole viewport only when the cursor has just left the last button.
+        if cell is not None:
+            viewport.update(cell)
+        elif self._qc_hovering:
+            viewport.update()
+        self._qc_hovering = over
+
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt naming)
         """Re-share the spare width on resize, and drop the hover button when
         the cursor leaves the table."""
         if self.table is not None and obj is self.table.viewport():
             if event.type() == QEvent.Type.Resize and self.table.columnCount():
                 self.table.resize_columns_to_contents_constrained()
+            elif event.type() == QEvent.Type.MouseMove:
+                self._point_at_qc_buttons(event)
             elif event.type() == QEvent.Type.Leave:
                 self.edit_status_button.hide()
                 self._edit_row = None
@@ -1635,7 +2436,14 @@ class ElectrodesWidget(QWidget):
         self.edit_status_button.raise_()
 
     def _on_cell_clicked(self, row: int, _column: int) -> None:
-        """Pick the row, or let it go if it was already picked."""
+        """Act on a QC request button, or pick the row.
+
+        A click on one of the buttons is not also a row selection: the
+        operator pressed a button, and having the row jump underneath the
+        confirmation box reads as two things happening.
+        """
+        if self._qc_action_clicked(row, _column):
+            return
         if self.df_visible is None or row >= len(self.df_visible):
             return
         marking = str(self.df_visible.iloc[row][str(ElectrodeColumns.MARKING)]).strip()
@@ -1660,6 +2468,76 @@ class ElectrodesWidget(QWidget):
             self.df_visible[column].astype(str).str.strip() == self._picked_marking]
         if len(rows):
             self._row_highlight.picked_row = int(rows[0])
+
+    def _worth_asking_for(self, row_index: int) -> bool:
+        """Whether production could still be asked for the electrode on this row.
+
+        Two reasons there is nothing to ask. The electrode is finished, or
+        it is on a rig already, in which case the question has no answer
+        anybody is waiting for. Or production cannot be shown it: they list
+        the last 30 days of finished electrodes, so an older one has no row on
+        their screen to answer on and the database expires the request within
+        the minute. Offering the button and then expiring what it raised is
+        worse than not offering it.
+        """
+        if self._status_of_row(row_index) in _NOTHING_LEFT:
+            return False
+        days = (self._get_request_window_days() if self._get_request_window_days
+                else 0)
+        if not days or days <= 0:
+            return True
+        made = self._date_of_row(row_index)
+        if made is None:
+            # No date to judge by, so no reason to take the button away.
+            return True
+        return (dt.datetime.now(dt.timezone.utc) - made).days < days
+
+    def _status_of_row(self, row_index: int) -> str:
+        """The electrode status on this visible row, as the frame holds it."""
+        frame = self.df_visible
+        if frame is None or STATUS_COLUMN not in frame.columns:
+            return ""
+        if not 0 <= row_index < len(frame):
+            return ""
+        return str(frame.iloc[row_index][STATUS_COLUMN]).strip()
+
+    def _date_of_row(self, row_index: int):
+        """When the electrode on this visible row was made, UTC, or None."""
+        frame = self.df_visible
+        column = str(ElectrodeColumns.DATE)
+        if frame is None or column not in frame.columns:
+            return None
+        if not 0 <= row_index < len(frame):
+            return None
+        made = pd.to_datetime(frame.iloc[row_index][column], errors="coerce",
+                              utc=True)
+        return None if pd.isna(made) else made.to_pydatetime()
+
+    def _coupons_of_row(self, row_index: int) -> str:
+        """What the request on this row asks be cut, read off the frame.
+
+        By row, the way the lock and the failure badges are: the delegate is
+        handed a row number and the frame is what that row was built from.
+        """
+        frame = self.df_visible
+        if frame is None or QC_COUPONS_COLUMN not in frame.columns:
+            return ""
+        if not 0 <= row_index < len(frame):
+            return ""
+        return str(frame.iloc[row_index][QC_COUPONS_COLUMN]).strip()
+
+    def _failure_badges(self, row_index: int) -> tuple:
+        """Why the electrode on this row failed, for the badges beside its pill.
+
+        Read off the rendered frame by row, the way the lock is: the delegate
+        is handed a row number and the frame is what the row was built from.
+        """
+        if (self.df_visible is None or row_index < 0
+                or row_index >= len(self.df_visible)
+                or FAILURE_COLUMN not in self.df_visible.columns):
+            return ()
+        codes = str(self.df_visible.iloc[row_index][FAILURE_COLUMN]).strip()
+        return tuple(code for code in codes.split(",") if code)
 
     def _locked_by(self, row_index: int) -> str:
         """The live decision driving this row's status, or '' if none does."""

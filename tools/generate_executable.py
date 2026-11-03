@@ -35,6 +35,9 @@ HIDDEN_IMPORTS = [
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
+    # The QC Sampling tab's plots. Named rather than left to the analysis,
+    # because it is imported from one module and only reached at runtime.
+    "pyqtgraph",
 ]
 SPEC_FILE = TOOLS_DIR / f"{EXECUTABLE_NAME}.spec"
 CONFIG_FOLDER = PROJECT_ROOT / "config"
@@ -168,22 +171,82 @@ def _read_connection_file() -> dict:
     return settings
 
 
-def _write_bundle_connection(destination: Path, database: str) -> str:
+def decide_plant_database(settings: dict, database: str) -> str:
+    """Where the bundle reads dbo.MetaData and dbo.ProcessData. "" to leave it out.
+
+    DB_PLANT_DATABASE NAMES A DATABASE TOO, and that is what went wrong once: a
+    release was built with DB_DATABASE set to the live database while this key,
+    carried over from the repo file untouched, still pointed at the test one. It
+    wrote to production and read the electrode list from a frozen snapshot, so
+    the newest 51 electrodes never appeared and never would have.
+
+    So it is decided here rather than inherited. A release never splits: reading
+    the electrode list from anywhere but the database it writes to is never
+    right, and that is refused outright rather than asked about. A test bundle
+    may split, which is the reason the key exists, but it has to be asked for.
+    """
+    inherited = str(settings.get("DB_PLANT_DATABASE", "") or "").strip()
+    if not inherited or inherited == database:
+        return ""
+
+    if database != KNOWN_DATABASES[0]:
+        print(f"\n  Dropping DB_PLANT_DATABASE ({inherited}) from this build.")
+        print(f"  A {database} bundle reads the electrode list from "
+              f"{database}, not from somewhere else.")
+        return ""
+
+    print(f"\nThe repo connection file reads the production tables from "
+          f"{inherited}\nrather than from {database}.")
+    keep = input(f"Keep that split in the bundle? [y/N]: ").strip().lower()
+    return inherited if keep in ("y", "yes") else ""
+
+
+def _write_bundle_connection(destination: Path, database: str,
+                             plant: str = "") -> str:
     """The connection file the bundle ships with. Returns the username in it.
 
-    A copy of the repo file with ONE field changed, the database. The driver,
-    the server and the login are the same wherever the bundle points, so they
-    are carried over untouched rather than asked for again.
+    A copy of the repo file with the two database fields decided by the caller.
+    The driver, the server and the login are the same wherever the bundle
+    points, so those are carried over untouched rather than asked for again.
     """
     settings = _read_connection_file()
     settings["DB_DATABASE"] = database
+    if plant and plant != database:
+        settings["DB_PLANT_DATABASE"] = plant
+    else:
+        settings.pop("DB_PLANT_DATABASE", None)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with open(destination, "w", encoding="utf-8") as handle:
         json.dump(settings, handle, indent=2)
         handle.write("\n")
     print(f"Wrote: {destination} ({database} as {settings['DB_USERNAME']})")
+    _check_bundle_connection(destination, database)
     return str(settings["DB_USERNAME"])
+
+
+def _check_bundle_connection(written: Path, database: str) -> None:
+    """Read back what will actually ship and refuse to leave it wrong.
+
+    Belt and braces: the decision above is the real guard, this reads the file
+    off disk afterwards so a future edit cannot quietly reintroduce the fault.
+    A release that points anywhere but at itself stops the build.
+    """
+    with open(written, "r", encoding="utf-8") as handle:
+        shipped = json.load(handle)
+
+    if str(shipped.get("DB_DATABASE", "")) != database:
+        raise SystemExit(f"{written} says {shipped.get('DB_DATABASE')!r} but "
+                         f"this build is for {database}. Nothing was shipped.")
+
+    plant = str(shipped.get("DB_PLANT_DATABASE", "") or "").strip()
+    if plant and database != KNOWN_DATABASES[0]:
+        raise SystemExit(
+            f"{written} would read the electrode list from {plant} while "
+            f"writing to {database}. A release may not do that. "
+            f"Nothing was shipped.")
+    if plant:
+        print(f"  Note: this bundle reads the production tables from {plant}.")
 
 
 def _run_pyinstaller(command: list[str]) -> None:
@@ -258,7 +321,8 @@ def build_executable() -> None:
 
     database = ask_database(suggested)
     confirm_database(database)
-    # Everything that needs asking is asked here, so the build runs unattended.
+    # Asked here, with everything else, so the build runs unattended afterwards.
+    plant = decide_plant_database(_read_connection_file(), database)
     version = choose_version(database)
 
     if SPEC_FILE.exists():
@@ -271,7 +335,7 @@ def build_executable() -> None:
     # Written rather than copied: the repo copy follows whatever is being
     # tested, and a bundle must say which database it was built for.
     username = _write_bundle_connection(config_dest / "db_connection.json",
-                                        database)
+                                        database, plant)
     # After PyInstaller, not before: a build that failed records no release.
     _write_version_file(config_dest, version)
     # The app runs this at startup if the ODBC driver isn't installed.
@@ -279,10 +343,10 @@ def build_executable() -> None:
 
     print(f"\nBuild finished. Executable output is under: {DIST_PATH}")
     print(f"Spec file is at: {SPEC_FILE}")
-    _announce(database, username)
+    _announce(database, username, plant)
 
 
-def _announce(database: str, username: str) -> None:
+def _announce(database: str, username: str, plant: str = "") -> None:
     """Say which database this bundle talks to, last and unmissably.
 
     Two builds look identical in the folder, so the one thing that tells them
@@ -291,6 +355,9 @@ def _announce(database: str, username: str) -> None:
     line = "=" * 62
     print(f"\n{line}")
     print(f"  THIS BUILD TALKS TO: {database}")
+    # Printed either way. Silence here is what let a bundle ship reading one
+    # database and writing another without anybody noticing.
+    print(f"  electrode list from: {plant or database}")
     print(f"  version:             {_current_version() or 'none'}")
     print(f"  signing in as:       {username}")
     if database != KNOWN_DATABASES[0]:

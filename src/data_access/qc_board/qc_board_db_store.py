@@ -94,8 +94,14 @@ class QcBoardDbStore:
     # default lives on the class: no vats, and every card is a candidate.
     _vat_provider = None
 
-    def __init__(self, session, vat_provider=None) -> None:
+    def __init__(self, session, vat_provider=None, on_arrival=None) -> None:
         self._session = session
+        # ``on_arrival(marking)``, run after a card lands. The card is the one
+        # thing in either application that says a physical electrode is here,
+        # so it is what closes an open request for it. Injected rather than
+        # called from here: the board knows nothing about requests, and a
+        # database without that schema simply passes nothing.
+        self._on_arrival = on_arrival
         # ``{marking: vat}``, so an unfreeze only considers cards from the run
         # the frozen sweep actually travelled along. Absent, every card is a
         # candidate, which is what this did before the vat was joined in.
@@ -152,6 +158,11 @@ class QcBoardDbStore:
                     "from": str(row.get("caused_by") or marking),
                     "at": str(row.get("archived_at_utc") or ""),
                     "priority": bool(row.get("test_first")),
+                    # Feature by presence: a database still on 015 returns no
+                    # such columns and every frozen verdict reads as having had
+                    # nothing written down, which is what it was.
+                    **{field: _finding(row.get(field), field)
+                       for field in FINDING_FIELDS},
                 }
 
         # Ordered by production number rather than by when a card was dropped
@@ -479,9 +490,26 @@ class QcBoardDbStore:
         return {marking for marking, entry in self._archived.items()
                 if entry.get("priority")}
 
+    def caused_by(self, marking: str) -> str:
+        """The verdict this electrode's frozen status was drawn from, or "".
+
+        Its own marking where it was tested itself, which is the same answer
+        the archive stores: an electrode is the cause of its own verdict.
+        """
+        entry = self._archived.get(str(marking).strip())
+        return str((entry or {}).get("from") or "")
+
     def findings(self, marking: str) -> dict:
-        """What has been observed about one electrode so far."""
-        entry = self._entries.get(str(marking).strip()) or {}
+        """What has been observed about one electrode so far.
+
+        The live card first, then the frozen one. An electrode is rarely both,
+        and where it is, the card is the newer of the two: it is on the board
+        again precisely because the old answer is being revisited.
+        """
+        key = str(marking).strip()
+        entry = self._entries.get(key)
+        if entry is None:
+            entry = self._archived.get(key) or {}
         return {field: _finding(entry.get(field), field) for field in FINDING_FIELDS}
 
     def can_undo(self) -> bool:
@@ -505,6 +533,16 @@ class QcBoardDbStore:
             "updated": self._now(),
             **{field: PENDING for field in FINDING_FIELDS},
         }
+        # After the card is written, not before: an electrode whose card did
+        # not land has not arrived anywhere.
+        if self._on_arrival is not None:
+            try:
+                self._on_arrival(key)
+            except Exception as e:
+                # The card is on the board either way, which is the part that
+                # matters. The request keeps its state and somebody closes it
+                # by hand, exactly as before this existed.
+                print(f"Could not close the QC request for {key}: {e}")
 
     def move(self, marking: str, stage: QcStage) -> bool:
         """Move an electrode to another stage. False if it isn't on the board."""
