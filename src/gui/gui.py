@@ -231,14 +231,19 @@ class MainWindow(QMainWindow):
         # the table above and the board are given, so the statuses it measures
         # are the ones on screen. That also settles which database it is
         # looking at, which is whichever one the app is connected to.
-        # The intervals are the one thing here that is not derived: they are
-        # set by hand and now stored in qc_requests, where the request rules
-        # read them too.
+        # The intervals and the on/off switch are the one thing here that is
+        # not derived: they are set by hand and stored in qc_requests, where
+        # the request rules read them too. The switch in particular has to be
+        # there rather than here, because the rule runs in the database and
+        # Production Data Manager calls it as well.
         self.sampling_widget = QcSamplingWidget(
             get_intervals=self.backend.get_sampling_intervals,
-            on_interval_changed=self.backend.set_sampling_interval)
+            on_interval_changed=self.backend.set_sampling_interval,
+            get_switch=self.backend.get_sampling_switch,
+            on_switch_changed=self.backend.set_sampling_switch)
         self.sampling_widget.show_loading()
         self.sampling_widget.reload_intervals()
+        self.sampling_widget.reload_switch()
         self.tabs.addTab(self.sampling_widget, "QC Sampling")
 
         main_layout.addWidget(self.tabs, 1)

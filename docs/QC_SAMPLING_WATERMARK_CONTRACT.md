@@ -131,7 +131,8 @@ No table permissions, as everywhere else in this schema.
 
 ## Before production
 
-`010` has to run on `dataloggingDev` and then on the production database, in
+`010` has to run on `dataloggingDev`, which despite its name IS the production
+database, in
 order, after `001` to `009`. None of the `qc_requests` migrations are on Dev
 yet. Poll the old way until you have checked the grant on the database you are
 actually pointed at.

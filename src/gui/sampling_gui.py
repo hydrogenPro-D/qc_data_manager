@@ -22,7 +22,7 @@ import pandas as pd
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF
 from PyQt6.QtWidgets import (
-    QAbstractSpinBox, QApplication, QFrame, QGridLayout, QHBoxLayout,
+    QAbstractSpinBox, QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
     QSlider, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -43,7 +43,9 @@ from .styles.input_styles import INPUT_FIELD_STYLE
 from .widgets.flow_layout import DIVIDER, flow_host
 from .widgets.no_wheel_tabs import NoWheelTabWidget
 from .widgets.sampling_range_dialog import SamplingRangeDialog
+from .widgets.sampling_start_dialog import SamplingStartDialog
 from .widgets.skeleton_overlay import SkeletonOverlay
+from .widgets.toggle_switch import OFF_FILL, ON_FILL, ToggleSwitch
 
 TITLE = "QC Sampling"
 BACKDROP = "#EEF4F5"
@@ -214,6 +216,22 @@ QSlider::handle:horizontal {{ background: {CARD}; border: 2px solid {GOOD};
                               width: 13px; height: 13px; margin: -6px 0;
                               border-radius: 8px; }}
 """
+# The switch in the corner of the control bar, and what it says beside it.
+# Loud on purpose: whether QC is sampling at all is the one thing on this tab
+# somebody has to be able to read without looking for it.
+SWITCH_NAME = "samplingSwitch"
+SWITCH_TEXT = "QC Automatic Sampling is {}"
+SWITCH_LABEL_STYLE = ("font-family: {font}; font-size: 14px; font-weight: 800;"
+                      "letter-spacing: 0.2px; color: {colour};"
+                      "background: transparent; border: none;")
+SWITCH_TIP_ON = ("Automatic sampling is on. Both applications raise the "
+                 "electrode each vat is due to be sampled at.")
+SWITCH_TIP_OFF = ("Automatic sampling is off. Nothing is asked for by the "
+                  "interval rule, on this machine or any other.\n\n"
+                  "Requests raised by hand, and the ones raised around a "
+                  "failure, are unaffected.")
+SWITCH_FAILED = ("The switch could not be changed.\n\n"
+                 "It is left as the database still has it.")
 SPACER_TINT = "#F3F7F8"
 # The totals row, set apart by a wash rather than by a repeated header.
 TOTALS_TINT = "#EDF3F4"
@@ -656,17 +674,26 @@ def _table(headers, compact: bool = False, parent=None,
 class QcSamplingWidget(QWidget):
     """Range in, run lengths out. A tab, with no backend of its own."""
 
-    def __init__(self, get_intervals=None, on_interval_changed=None) -> None:
+    def __init__(self, get_intervals=None, on_interval_changed=None,
+                 get_switch=None, on_switch_changed=None) -> None:
         """Injected callables only, no backend.
 
         ``get_intervals`` returns ``{vat: electrodes between samples}`` and
         ``on_interval_changed(vat, value)`` returns False when it could not be
-        saved. Both default to None so the tab still builds in a test with no
-        database behind it, and then every vat reads at the default.
+        saved. ``get_switch`` answers whether automatic sampling is on, or None
+        where this database has no switch to read, and
+        ``on_switch_changed(on, start_now)`` throws it. All default to None so
+        the tab still builds in a test with no database behind it, and then
+        every vat reads at the default and the switch is not shown at all.
         """
         super().__init__()
         self._get_intervals = get_intervals
         self._on_interval_saved = on_interval_changed
+        self._get_switch = get_switch
+        self._on_switch_saved = on_switch_changed
+        # None until something has answered: not the same as off, and the
+        # control stays hidden until it is one or the other.
+        self._switch_state: bool | None = None
         # The last answer from the database, so the panels can be redrawn
         # without a query per spin box.
         self._intervals: dict[str, int] = {}
@@ -850,8 +877,84 @@ class QcSamplingWidget(QWidget):
                 flow.addWidget(_Separator(BAR_GROUP_GAP))
             flow.addWidget(_bar_group(group, host))
 
-        box.addWidget(host, 0)
+        # The switch sits outside the flow, at the right hand end, so that a
+        # bar wrapping onto a second row leaves it where it was rather than
+        # carrying it down with the last group.
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(BAR_GROUP_GAP)
+        row.addWidget(host, 1)
+        row.addWidget(self._switch_group(), 0,
+                      Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        box.addLayout(row, 0)
         return frame
+
+    def _switch_group(self) -> QWidget:
+        """The on/off switch, and what it says in words beside it."""
+        self.switch_label = QLabel()
+        self.switch = ToggleSwitch()
+        self.switch.requested.connect(self._on_switch_requested)
+
+        group = QWidget()
+        # Scoped by name, like every other rule in this file: a bare selector
+        # reaches the tooltip window too and paints it black on Windows.
+        group.setObjectName(SWITCH_NAME)
+        group.setStyleSheet(f"QWidget#{SWITCH_NAME} {{ background: transparent; }}")
+        line = QHBoxLayout(group)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(10)
+        line.addWidget(self.switch_label, 0)
+        line.addWidget(self.switch, 0)
+        # Hidden until something says which way it is. A switch drawn at a
+        # guess is worse than no switch.
+        self._show_switch(None)
+        return group
+
+    def _show_switch(self, state: bool | None) -> None:
+        """Draw the switch as this, or hide it where there is nothing to draw."""
+        self._switch_state = state
+        known = state is not None
+        for widget in (self.switch_label, self.switch):
+            widget.setVisible(known)
+        if not known:
+            return
+        word, colour = ("on", ON_FILL) if state else ("off", OFF_FILL)
+        self.switch_label.setText(SWITCH_TEXT.format(word))
+        self.switch_label.setStyleSheet(
+            SWITCH_LABEL_STYLE.format(font=FONT, colour=colour))
+        tip = SWITCH_TIP_ON if state else SWITCH_TIP_OFF
+        self.switch_label.setToolTip(tip)
+        self.switch.setToolTip(tip)
+        self.switch.set_state(state)
+
+    def _on_switch_requested(self, wanted: bool) -> None:
+        """Throw it, after asking where the count starts if it is going on.
+
+        The control only moves once the database has agreed, so a write that
+        did not land leaves the tab saying what is actually stored.
+        """
+        if self._on_switch_saved is None:
+            return
+        start_now = False
+        if wanted:
+            dialog = SamplingStartDialog(self, self._intervals)
+            if not dialog.exec() or dialog.start_now is None:
+                return
+            start_now = bool(dialog.start_now)
+        if not self._on_switch_saved(wanted, start_now):
+            QMessageBox.warning(self, TITLE, SWITCH_FAILED)
+            return
+        self._show_switch(wanted)
+
+    def reload_switch(self) -> None:
+        """Re-read the switch. It is one row, and another machine may have
+        thrown it."""
+        if self._get_switch is None:
+            return
+        try:
+            self._show_switch(self._get_switch())
+        except Exception as e:
+            print(f"Could not read the sampling switch: {e}")
 
     def _on_gap(self, value: int) -> None:
         """Retitle the slider and re-measure at the new tolerance."""
@@ -1331,6 +1434,10 @@ class QcSamplingWidget(QWidget):
         """
         super().showEvent(event)
         QTimer.singleShot(0, self._layout_tables)
+        # One row, read on the way in rather than on a timer: the switch is
+        # thrown from either machine and seeing a stale one here would be
+        # worse than the read costs.
+        self.reload_switch()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         """Re-share the width whenever there is a different amount of it.

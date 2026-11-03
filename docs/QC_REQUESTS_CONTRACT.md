@@ -213,6 +213,12 @@ EXEC qc_requests.usp_raise_due_requests;   -- → raised, note
 This is the one that needs explaining, because it is a write that PDM makes on
 nobody's behalf.
 
+> **It can be switched off, as of `016`.** Same call, same timer, and while the
+> switch is off it raises nothing and puts a sentence in `note`, which has
+> always been NULL until now. `remaining` in `vw_vat_sampling_status` is then
+> NULL for every vat, and both that view and `vw_vat_sampling_watermark` gain a
+> `sampling_on` column at the end. See `QC_SAMPLING_SWITCH_CONTRACT.md`.
+
 QC samples one electrode in every N per plating vat, N being a number QC sets
 and changes. Somebody has to notice when production has made the next one due.
 The rule lives in the database rather than in either application, because the

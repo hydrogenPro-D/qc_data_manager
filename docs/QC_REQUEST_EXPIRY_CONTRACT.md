@@ -140,7 +140,8 @@ the procedure. Both move when you tell us yours has.
 
 ## Before production
 
-`011` has to run on `dataloggingDev` and then on production, after `001` to
+`011` has to run on `dataloggingDev`, which despite its name is the production
+database, after `001` to
 `010`. None of the `qc_requests` migrations are on Dev yet. The first run on a
 database expires its whole backlog at once, so run it when somebody is
 watching rather than overnight.

@@ -59,6 +59,7 @@ from src.data_access.qc_requests import coupon_columns
 from src.data_access.qc_requests.request_columns import KIND_FAULT
 from src.data_access.sampling.interval_db_source import (load_intervals,
                                                          set_interval)
+from src.data_access.sampling.switch_db_source import load_switch, set_switch
 from src.data_access.sem_edx import sem_edx_db_source as sem_db
 from src.data_access.sem_edx import sem_edx_library
 from src.data_access.sem_edx.sem_edx_columns import (
@@ -503,6 +504,23 @@ class DbManager:
     def set_sampling_interval(self, vat: str, electrodes_between: int) -> bool:
         """Record one vat's interval. False when it could not be written."""
         return set_interval(self._session, vat, electrodes_between)
+
+    def get_sampling_switch(self) -> bool | None:
+        """Is automatic sampling on? None where there is no switch to read.
+
+        None is not off. It means this database has not had migration 016, so
+        the tab hides the control rather than offering one that writes nowhere.
+        """
+        return load_switch(self._session)
+
+    def set_sampling_switch(self, on: bool, start_now: bool = False) -> bool:
+        """Throw the switch for the whole line. False if it did not take.
+
+        ``start_now`` is read only on the way on: True asks for the next
+        electrode each vat makes, False counts a full interval from where the
+        vat stands now. See 016.
+        """
+        return set_switch(self._session, on, start_now)
 
     # ---- production metadata (dbo.MetaData) ---------------------------
     def get_metadata(self) -> pd.DataFrame:

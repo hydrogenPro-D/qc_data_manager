@@ -20,6 +20,7 @@ import pandas as pd
 import qtawesome as qta
 
 from .styles.table_styles import (
+    PULL_LIST_TABLE_STYLE,
     TABLE_STYLE,
     SCROLLBAR_STYLE,
     SCROLLBAR_HORIZONTAL_HEIGHT,
@@ -229,9 +230,23 @@ TEST_FIRST_ROW_HEIGHT = 28
 # The quiet button the filter bar's "Clear all filters" wears, a point larger:
 # it sits beside a heading rather than among inputs, and at 12px it read as
 # part of the table underneath it. Last, so the size wins.
+# Tighter than the quiet style it is built on, which is written for a row of
+# buttons rather than for one squeezed between a figure and a table. Last, so
+# both the size and the padding win.
 COUPON_BUTTON_STYLE = QUIET_BUTTON_STYLE + """
-    QPushButton { font-size: 13px; }
+    QPushButton { font-size: 13px; padding: 3px 10px; }
 """
+# Between the pinned blocks: the scrapped figure, the pull list, the report
+# button. Every pixel here is a pixel the chart above gives up to a scrollbar,
+# and these three read as one block rather than as three panels.
+# Left, top, right, bottom inside the tab's white card. Tighter at the top and
+# bottom than the shared default of 16, which on this tab is 32px taken off the
+# side panel before anything is drawn in it.
+CARD_PADDING = (16, 8, 16, 8)
+PINNED_GAP = 3
+# Between the Coupon Settings button and the list it governs. They belong
+# together, so it is the tightest gap in the panel.
+PULL_LIST_GAP = 2
 # What a cell costs around its text in the pull list: the delegate's margins
 # either side and a little slack so the longest state is not clipped.
 CELL_PADDING = 16
@@ -507,7 +522,8 @@ class ElectrodesWidget(QWidget):
     # ------------------------------------------------------------------
     def init_ui(self) -> None:
         """Title, filter bar, then the table filling the rest of the screen."""
-        main_layout, content_container, content_layout = create_styled_container_layout()
+        main_layout, content_container, content_layout = (
+            create_styled_container_layout(inner_margins=CARD_PADDING))
 
         title = QLabel("Electrodes")
         title_font = QFont()
@@ -788,7 +804,7 @@ class ElectrodesWidget(QWidget):
         pinned = QWidget()
         pinned_layout = QVBoxLayout()
         pinned_layout.setContentsMargins(*PANEL_MARGINS)
-        pinned_layout.setSpacing(8)
+        pinned_layout.setSpacing(PINNED_GAP)
         # Scrapped is pinned too. It was asked for as a number that is on
         # screen whatever the filters say, and in the scrolling half it was
         # only on screen when the window happened to be tall enough.
@@ -809,7 +825,8 @@ class ElectrodesWidget(QWidget):
         self._side_panel = side_panel
         side_layout = QVBoxLayout()
         side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(8)
+        # Between the breakdown that scrolls and the block pinned under it.
+        side_layout.setSpacing(PINNED_GAP)
         side_layout.addWidget(chart_scroll, 1)
         side_layout.addWidget(pinned, 0)
         side_panel.setLayout(side_layout)
@@ -819,9 +836,15 @@ class ElectrodesWidget(QWidget):
         # that is the height the donut and the pull list were short of. The
         # search box and the count move with them, which is no loss: they
         # describe the table, which is what they now sit above.
+        # THE TITLE SITS OVER THE TABLE TOO, for the same reason the filters
+        # do. Spanning the window it left a band of empty white the width of
+        # the side panel and the height of a heading, directly above the donut,
+        # and the panel is the one column on this tab that is short of height.
         left_column = QVBoxLayout()
         left_column.setContentsMargins(0, 0, 0, 0)
         left_column.setSpacing(0)
+        left_column.addLayout(toolbar, 0)
+        left_column.addSpacing(4)
         left_column.addWidget(filter_scroll, 0)
         left_column.addSpacing(4)
         left_column.addWidget(self.table, 1)
@@ -832,8 +855,6 @@ class ElectrodesWidget(QWidget):
         body.addLayout(left_column, 1)
         body.addWidget(side_panel, 0)
 
-        content_layout.addLayout(toolbar, 0)
-        content_layout.addSpacing(4)
         content_layout.addLayout(body, 1)
         content_container.setLayout(content_layout)
 
@@ -1186,7 +1207,7 @@ class ElectrodesWidget(QWidget):
             min_table_height=90,
             scroll_to_top_on_load=True,
         )
-        self.test_first_table.setStyleSheet(TABLE_STYLE)
+        self.test_first_table.setStyleSheet(PULL_LIST_TABLE_STYLE)
         self.test_first_table.setFrameShape(QFrame.Shape.NoFrame)
         self.test_first_table.setSelectionMode(
             self.test_first_table.SelectionMode.NoSelection)
@@ -1238,7 +1259,7 @@ class ElectrodesWidget(QWidget):
         panel = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(PULL_LIST_GAP)
         layout.addLayout(title_row)
         layout.addWidget(self.test_first_table, 1)
         panel.setLayout(layout)
@@ -1519,11 +1540,17 @@ class ElectrodesWidget(QWidget):
         return wanted + CouponTextDelegate.EXTRA
 
     def _fit_test_first_table(self) -> None:
-        """Give the pull list the height its rows need, and no more.
+        """Give the pull list the height its rows need, within its own band.
 
-        It is pinned under the breakdown now, so every pixel it reserves is a
-        pixel the donut and its legend do not get. One flagged electrode asked
-        for six rows of empty table and the legend was cut off to pay for it.
+        It is pinned under the breakdown, so every pixel it reserves is a pixel
+        the donut and its legend do not get, and a long list is capped rather
+        than cutting the legend off.
+
+        THE FLOOR IS NOT NEGOTIABLE, though. Sized to three rows the list came
+        out shorter than its own header and read as a scrap of table, with the
+        room it had just left blank above it. A block of a known size is read
+        at a glance on any screen; a block that changes height with its
+        contents has to be found first.
         """
         table = self.test_first_table
         if table is None:
@@ -1533,7 +1560,8 @@ class ElectrodesWidget(QWidget):
         row_height = table.rowHeight(0) or table.BASE_ROW_HEIGHT
         header = table.horizontalHeader().height()
         wanted = header + max(1, table.rowCount()) * row_height + 4
-        table.setFixedHeight(min(self._pull_list_ceiling(), wanted))
+        table.setFixedHeight(max(TEST_FIRST_MIN_HEIGHT,
+                                 min(self._pull_list_ceiling(), wanted)))
 
     def _pull_list_ceiling(self) -> int:
         """The tallest the pull list may be on this window.

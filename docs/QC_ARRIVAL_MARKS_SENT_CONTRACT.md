@@ -202,5 +202,6 @@ here on.
 
 ## Before production
 
-`012`, `013` and `014` have to run on `dataloggingDev` and then on production,
+`012`, `013` and `014` have to run on `dataloggingDev`, which despite its name
+is the production database,
 after `001` to `011`. None of the `qc_requests` migrations are on Dev yet.

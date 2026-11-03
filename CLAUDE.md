@@ -179,3 +179,8 @@ venv\Scripts\python.exe tools\generate_executable.py                # build
 Tests are `unittest`, run headless with `QT_QPA_PLATFORM=offscreen`.
 Processors get pure data-in/data-out tests; widgets get tests with fake
 callbacks and synthetic DataFrames — no live database.
+
+**Run the whole suite only when asked.** It takes two and a half minutes, which
+is most of the wait on an ordinary change. Save it for the moment the branch is
+being committed, released or called finished, and say so when you want it run.
+While building, run the one or two modules the change touches and nothing else.
