@@ -195,9 +195,13 @@ DONUT_DIAMETER = 212
 # and the quickest way to give it room back is to drop a column from the list.
 CHART_PANEL_WIDTH = 440 + SCROLLBAR_VERTICAL_WIDTH
 # What the panel may shrink and grow to once the pull list has measured itself.
-# The floor is what the donut and its legend need; the ceiling is so a long
-# request state cannot push the table off the screen.
-CHART_PANEL_MIN = 330 + SCROLLBAR_VERTICAL_WIDTH
+# The ceiling is so a long request state cannot push the table off the screen.
+#
+# THE FLOOR IS MEASURED, see _panel_floor: what the legend needs depends on the
+# font and the screen's scaling. This is only the backstop under that, the ring
+# itself and the margins either side of it, for the moment before there is a
+# legend to measure.
+CHART_PANEL_MIN = DONUT_DIAMETER + 48
 CHART_PANEL_MAX = 560 + SCROLLBAR_VERTICAL_WIDTH
 # Left, top, right, bottom. Shared by the part that scrolls and the part
 # pinned under it, so the two columns of content line up.
@@ -213,12 +217,21 @@ PANEL_MARGINS = (14, 0, 5, 0)
 # was there to stop. So the breakdown is served first, at its own natural
 # height, and the list gets the rest.
 #
-# The floor is the old fixed height, so a small screen is never worse off than
-# it was; the ceiling stops a very tall window handing the list more rows than
-# anybody reads at once.
+# The floor is what a short list wants so it does not read as a scrap of
+# table; the ceiling stops a very tall window handing the list more rows than
+# anybody reads at once. On a laptop the panel has less than the floor to give,
+# and there the floor yields: a block of a known size is worth having, but not
+# at the price of cutting the breakdown above it in half.
 TEST_FIRST_BREAKDOWN_ROOM = 470
 TEST_FIRST_MIN_HEIGHT = 240
 TEST_FIRST_MAX_HEIGHT = 440
+# The least the list may be squeezed to, its header and two rows. Below this it
+# is not a list any more.
+TEST_FIRST_FLOOR = 90
+# What the table is left with, so the panel beside it can never take the window.
+# The panel is sized to the pull list, which on a wide screen is fine and on a
+# laptop spent a third of the window on a donut.
+TABLE_ROOM = 980
 # What the pull list says where production has not been asked for one. The main
 # table draws a button there instead; this list is read only, so it says it.
 NOT_REQUESTED = "Not requested"
@@ -696,6 +709,15 @@ class ElectrodesWidget(QWidget):
 
         self._flasher = RowFlasher(self._row_highlight, self.table, self)
 
+        # Every fit in this tab measures the window it is in, and until now
+        # nothing asked for them again when the window changed size. One timer
+        # for the lot, coalescing the stream of events a drag produces, and
+        # fired once Qt has laid the children out rather than during.
+        self._refit_timer = QTimer(self)
+        self._refit_timer.setSingleShot(True)
+        self._refit_timer.setInterval(0)
+        self._refit_timer.timeout.connect(self._refit_to_window)
+
         self._shimmer_step = 0
         self._shimmer_timer = QTimer(self)
         self._shimmer_timer.setInterval(SHIMMER_TICK_MS)
@@ -732,6 +754,12 @@ class ElectrodesWidget(QWidget):
         self._status_column: int | None = None
         self._qc_column: int | None = None
         self._side_panel: QWidget | None = None
+        # What the pull list's columns need for their contents, before any
+        # spare width is handed back out to them. The panel is sized from this
+        # rather than from what the columns currently are: fitting it to the
+        # filled widths would widen the panel, which would hand out more spare,
+        # which would widen it again.
+        self._pull_columns_width = 0
         # What each pull list row asks be cut, in the order the list shows them.
         self._pull_coupons: list[str] = []
         # And their states, in the same order, for the rows that are bolded.
@@ -787,6 +815,7 @@ class ElectrodesWidget(QWidget):
         # panel keeps its natural size and the window is free to be any height,
         # scrolling here when it has to.
         chart_scroll = QScrollArea()
+        self._chart_scroll = chart_scroll
         chart_scroll.setWidget(chart_panel)
         chart_scroll.setWidgetResizable(True)
         chart_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1235,6 +1264,10 @@ class ElectrodesWidget(QWidget):
             RowTintDelegate(self._pull_row_tint, self.test_first_table))
         self.test_first_table.verticalHeader().setVisible(False)
         self.test_first_table.set_columns_fill(True)
+        # Spare width goes back to the columns rather than sitting as a white
+        # strip at the right of the list. Never a squeeze: it only ever hands
+        # out room the table already has.
+        self.test_first_table.set_fill_remaining_width(True)
         self.test_first_table.setMinimumWidth(120)
         # The absolute ceiling; the share of the panel is worked out on
         # every fit, once the panel has a height to take a share of.
@@ -1290,11 +1323,13 @@ class ElectrodesWidget(QWidget):
         QTimer.singleShot(0, self._fit_test_first_table)
         visible = self.df_visible
         if visible is None or visible.empty or PRIORITY_COLUMN not in visible.columns:
+            self._pull_columns_width = 0
             self.test_first_table.load_data(pd.DataFrame())
             return
 
         flagged = self._in_answer_order(visible[self._still_going_on(visible)])
         if flagged.empty:
+            self._pull_columns_width = 0
             self.test_first_table.load_data(pd.DataFrame())
             return
 
@@ -1488,26 +1523,43 @@ class ElectrodesWidget(QWidget):
         # change under it.
         table.setColumnWidth(last, max(table.columnWidth(last),
                                        self._request_column_width(last)))
+        self._pull_columns_width = sum(table.columnWidth(index)
+                                       for index in range(last + 1))
         self._fit_panel_to_list()
+        # And whatever the panel came out at, the columns spread across it. The
+        # legend below the ring is usually the wider of the two, so the list
+        # was left with a ragged strip of white down its right hand side.
+        QTimer.singleShot(0, table.fill_remaining_width)
 
     def _fit_panel_to_list(self) -> None:
-        """Make the side panel as wide as the pull list needs, and no wider.
+        """Make the side panel as wide as its contents need, and no wider.
 
-        Clamped at both ends: the donut and its legend live in the same panel
-        and have their own minimum, and a long request state must not be able
-        to push the table off the screen.
+        Clamped at both ends: the legend under the ring is measured and is
+        usually the wider of the two, see _panel_floor, and a long request
+        state must not be able to push the table off the screen.
         """
-        table = self.test_first_table
-        if self._side_panel is None or not table.columnCount():
+        if self._side_panel is None:
             return
-        columns = sum(table.columnWidth(index)
-                      for index in range(table.columnCount()))
+        columns = self._pull_columns_width
         # Plus a few pixels: fitted to the exact sum, Qt's own rounding was
         # enough to overflow by one and hang a horizontal scrollbar under a
         # table that fits.
-        wanted = (columns + SCROLLBAR_VERTICAL_WIDTH + PANEL_MARGINS[0]
-                  + PANEL_MARGINS[2] + 6)
-        width = max(CHART_PANEL_MIN, min(CHART_PANEL_MAX, wanted))
+        #
+        # THE LIST'S SCROLLBAR ONLY WHEN IT HAS ONE. Reserved whatever the list
+        # held, those 35 pixels were a white gap down the right of a table that
+        # fits, and the panel was that much wider than it had any need to be.
+        bar = SCROLLBAR_VERTICAL_WIDTH if self._pull_list_scrolls() else 0
+        # Nothing in the list asks for nothing, and the floor below decides:
+        # there is no reason to hold the width of a list that is not there.
+        wanted = (columns + bar + PANEL_MARGINS[0]
+                  + PANEL_MARGINS[2] + 6) if columns else 0
+        # AND NO WIDER THAN THE WINDOW CAN SPARE. The list asks for what its
+        # columns need without knowing what is left for the table, and on a
+        # laptop that was a third of the screen spent on a donut. An empty list
+        # used to skip this entirely and leave the panel at its opening width,
+        # which is the one case where the table needs the room most.
+        room = self.width() - TABLE_ROOM if self.width() else CHART_PANEL_MAX
+        width = max(self._panel_floor(), min(CHART_PANEL_MAX, wanted, room))
         if self._side_panel.width() != width:
             self._side_panel.setFixedWidth(width)
 
@@ -1546,22 +1598,63 @@ class ElectrodesWidget(QWidget):
         the donut and its legend do not get, and a long list is capped rather
         than cutting the legend off.
 
-        THE FLOOR IS NOT NEGOTIABLE, though. Sized to three rows the list came
-        out shorter than its own header and read as a scrap of table, with the
-        room it had just left blank above it. A block of a known size is read
-        at a glance on any screen; a block that changes height with its
-        contents has to be found first.
+        THE FLOOR HOLDS WHILE THERE IS ROOM FOR IT. Sized to three rows the
+        list came out shorter than its own header and read as a scrap of table,
+        with the room it had just left blank above it. A block of a known size
+        is read at a glance; a block that changes height has to be found first.
+
+        BUT AN EMPTY LIST IS NOT A BLOCK, it is a white box, and on a laptop
+        the 240 pixels it was holding came straight off the breakdown above it,
+        which is the thing an operator came to this panel to read. With no rows
+        the list takes what its header needs, and on a window too short for the
+        floor the ceiling wins.
         """
         table = self.test_first_table
         if table is None:
             return
         # A nominal row height when the rows have not been measured yet, or an
         # empty list collapses to a header with nowhere to put the first row.
+        wanted = self._pull_list_natural_height()
+        ceiling = self._pull_list_ceiling()
+        # An empty list is loaded with no columns either, so there is not even
+        # a header to leave behind: what it draws is a bordered blank. Out of
+        # the way altogether, and the button above it says what it was for.
+        table.setVisible(bool(table.rowCount()))
+        floor = min(TEST_FIRST_MIN_HEIGHT, ceiling) if table.rowCount() else 0
+        table.setFixedHeight(max(floor, min(ceiling, wanted)))
+
+    def _pull_list_natural_height(self) -> int:
+        """The height the list would take if nothing capped it."""
+        table = self.test_first_table
+        # A nominal row height when the rows have not been measured yet, or an
+        # empty list collapses to a header with nowhere to put the first row.
         row_height = table.rowHeight(0) or table.BASE_ROW_HEIGHT
-        header = table.horizontalHeader().height()
-        wanted = header + max(1, table.rowCount()) * row_height + 4
-        table.setFixedHeight(max(TEST_FIRST_MIN_HEIGHT,
-                                 min(self._pull_list_ceiling(), wanted)))
+        return (table.horizontalHeader().height()
+                + max(1, table.rowCount()) * row_height + 4)
+
+    def _pull_list_scrolls(self) -> bool:
+        """Whether the list will not fit in the height it is about to get."""
+        table = self.test_first_table
+        if table is None or not table.rowCount():
+            return False
+        return self._pull_list_natural_height() > self._pull_list_ceiling()
+
+    def _panel_floor(self) -> int:
+        """The narrowest the panel may be: what the breakdown needs to be read.
+
+        MEASURED, not a number. The legend's longest label is the widest thing
+        in this panel that cannot be squeezed, and what it comes to depends on
+        the font and the screen's scaling, neither of which a constant in this
+        module can know. At 330 it was guessing, and on a laptop it guessed
+        low: the percentages were sliced off the right of every row.
+        """
+        panel = getattr(self, "_chart_panel", None)
+        if panel is None:
+            return CHART_PANEL_MIN
+        scroll = getattr(self, "_chart_scroll", None)
+        bar = (SCROLLBAR_VERTICAL_WIDTH if scroll is not None
+               and scroll.verticalScrollBar().isVisible() else 0)
+        return max(CHART_PANEL_MIN, panel.minimumSizeHint().width() + bar)
 
     def _pull_list_ceiling(self) -> int:
         """The tallest the pull list may be on this window.
@@ -1572,7 +1665,10 @@ class ElectrodesWidget(QWidget):
         panel = self._side_panel
         room = panel.height() if panel is not None else 0
         left_over = room - TEST_FIRST_BREAKDOWN_ROOM
-        return max(TEST_FIRST_MIN_HEIGHT,
+        # The floor it falls back on is the list's own, not the one a tall
+        # window would like: on a short screen there is no height to hand out
+        # that the breakdown is not already short of.
+        return max(TEST_FIRST_FLOOR,
                    min(TEST_FIRST_MAX_HEIGHT, left_over))
 
     def statuses_in_scope(self) -> list[str]:
@@ -1713,7 +1809,12 @@ class ElectrodesWidget(QWidget):
         # of this call and the panel does not know its new height until it has
         # settled. Measured here it reports the height of the chart it is
         # replacing, which at startup is an empty one.
+        #
+        # The width goes with it. The legend is the panel's floor, and which
+        # statuses are listed is what sets how wide its longest label is, so a
+        # filter that drops the longest one is a filter that frees up width.
         QTimer.singleShot(0, self._fit_chart_panel)
+        QTimer.singleShot(0, self._fit_panel_to_list)
         self._update_scrap_rate()
 
     def _status_at(self, row_index: int) -> str | None:
@@ -2193,6 +2294,22 @@ class ElectrodesWidget(QWidget):
         elif self._qc_hovering:
             viewport.update()
         self._qc_hovering = over
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Give the panel, the pull list and the filter strip another look."""
+        super().resizeEvent(event)
+        self._refit_timer.start()
+
+    def _refit_to_window(self) -> None:
+        """The three fits that depend on how much window there is, in order.
+
+        Width first: the panel's width is what is left for the table, and the
+        heights below are measured against the panel it produces.
+        """
+        self._fit_panel_to_list()
+        self._fit_test_first_table()
+        self._fit_chart_panel()
+        self._fit_filter_height()
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt naming)
         """Re-share the spare width on resize, and drop the hover button when

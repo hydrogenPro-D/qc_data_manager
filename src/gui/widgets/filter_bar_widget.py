@@ -525,6 +525,26 @@ class DateRangeWidget(QWidget):
         self.changed.emit()
 
 
+class CurrentPageStack(QStackedWidget):
+    """As wide as the page it is showing, not as its widest page.
+
+    A ``QStackedWidget`` reserves room for every page at once, so in All mode
+    the date filter was holding the width of two date pickers and the word
+    between them, none of which is on screen. On a laptop that invisible 290
+    pixels is the difference between the filter strip fitting and scrolling
+    sideways with the search box off the end of it.
+    """
+
+    def sizeHint(self):  # noqa: N802 (Qt naming)
+        page = self.currentWidget()
+        return page.sizeHint() if page is not None else super().sizeHint()
+
+    def minimumSizeHint(self):  # noqa: N802 (Qt naming)
+        page = self.currentWidget()
+        return (page.minimumSizeHint() if page is not None
+                else super().minimumSizeHint())
+
+
 class DateFilterWidget(QWidget):
     """All / single month / explicit range, collapsed into one (start, end)."""
 
@@ -562,7 +582,7 @@ class DateFilterWidget(QWidget):
             layout.addWidget(button, 0)
 
         # Only the active mode's input is shown; "All" gets an empty page.
-        self._inputs = QStackedWidget()
+        self._inputs = CurrentPageStack()
         self._inputs.addWidget(QWidget())          # MODE_ALL
         self._inputs.addWidget(self._month_page())  # MODE_MONTH
         self._inputs.addWidget(self._range_page())  # MODE_RANGE
@@ -573,8 +593,8 @@ class DateFilterWidget(QWidget):
     def _month_page(self) -> QWidget:
         self.month_combo = NoScrollComboBox()
         self.month_combo.setStyleSheet(_COMBO_STYLE)
-        # The stack is as wide as its widest page (the two date pickers), so
-        # without a trailing stretch the combo would spread across all of it.
+        # Capped, and with the trailing stretch below, so the combo keeps its
+        # own width rather than spreading across the page it sits on.
         self.month_combo.setMaximumWidth(150)
         self.month_combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
 
@@ -618,6 +638,11 @@ class DateFilterWidget(QWidget):
             button.setChecked(key == mode)
         self._inputs.setCurrentIndex(
             {self.MODE_ALL: 0, self.MODE_MONTH: 1, self.MODE_RANGE: 2}[mode])
+        # The stack is now as wide as the page it shows, so switching pages
+        # changes how much of the row this filter wants. Nothing asks again on
+        # its own.
+        self._inputs.updateGeometry()
+        self.updateGeometry()
         self.changed.emit()
 
     def set_month_options(self, months: list[tuple[int, int]]) -> None:
@@ -770,6 +795,14 @@ class FilterBarWidget(QWidget):
         self._wrapping: list = []
         self._overflow_row: QWidget | None = None
         self._wrapped = False
+        # The same for the count, the search box and Clear all filters, which
+        # ride at the right of the first row. They describe the filters rather
+        # than being filters, so when that row cannot hold everything they are
+        # the ones that move.
+        self._trailing: list = []
+        self._trailing_home: tuple[QHBoxLayout, int] | None = None
+        self._trailing_row: QWidget | None = None
+        self._trailing_wrapped = False
         # One row per group rather than one long strip. Past four dropdowns and
         # a range a single row is wider than the window, and a filter strip that
         # scrolls sideways can hide a filter that is switched on.
@@ -800,6 +833,19 @@ class FilterBarWidget(QWidget):
             return line
 
         first = row()
+        # Under the first row rather than at the bottom of the bar: the count
+        # and the search belong with the filters they describe, and read as
+        # something else entirely sitting below the date ranges.
+        self._trailing_row = QWidget()
+        trailing_layout = QHBoxLayout(self._trailing_row)
+        trailing_layout.setContentsMargins(0, 0, 0, 0)
+        trailing_layout.setSpacing(10)
+        outer.addWidget(self._trailing_row)
+        self._trailing_row.hide()
+        # Its own stretch, and deliberately NOT in ``rows``: that list is what
+        # add_trailing and add_before_extra_range index into by row number.
+        trailing_layout.addStretch(1)
+
         for dropdown in self._dropdowns:
             combo = CheckableFilterCombo(dropdown.all_label)
             combo.setStyleSheet(_COMBO_STYLE)
@@ -847,7 +893,12 @@ class FilterBarWidget(QWidget):
         # right of the last one, after everything it undoes.
         self.count_label = QLabel("")
         self.count_label.setStyleSheet(_LABEL_STYLE)
+        # After the stretch, which is what holds the group at the right of the
+        # row, and the index it goes back to when it comes home from its own
+        # line.
+        self._trailing_home = (first, first.count())
         first.addWidget(self.count_label, 0)
+        self._trailing.append(self.count_label)
 
         if with_search:
             self.search_input = QLineEdit()
@@ -859,6 +910,7 @@ class FilterBarWidget(QWidget):
             self.search_input.setStyleSheet(_SEARCH_STYLE)
             self.search_input.textChanged.connect(lambda _t: self._search_timer.start())
             first.addWidget(self.search_input, 0)
+            self._trailing.append(self.search_input)
 
         if self._with_clear:
             self.clear_button = QPushButton("Clear all filters")
@@ -866,6 +918,7 @@ class FilterBarWidget(QWidget):
             self.clear_button.setStyleSheet(_CLEAR_BUTTON_STYLE)
             self.clear_button.clicked.connect(self.clear_all)
             first.addWidget(self.clear_button, 0)
+            self._trailing.append(self.clear_button)
 
         # Kept so an owning tab can hang something off the end of a row, see
         # add_trailing.
@@ -890,44 +943,59 @@ class FilterBarWidget(QWidget):
         self._reflow()
 
     def _reflow(self) -> None:
-        """Drop the extra date range onto its own line when the row is full.
+        """Drop a full row's travelling group onto a line of its own.
 
         Qt squeezes the fields rather than letting the row overflow, and an
         electrode number typed into a 56 pixel box cannot be read back. Nothing
         here is allowed to shrink, so the row that cannot fit gets a second
         line instead. On a wide screen the line is hidden and costs nothing.
+
+        Two groups travel, on two different rows, so they do not interact: the
+        extra date range off the ranges row, and the count, the search box and
+        Clear all filters off the filters row. The second only on a bar built
+        to be more than one line: the tabs with a single row pin their strip to
+        the height it had when they built it, and a line appearing under it
+        would be a line nobody can see.
         """
-        if not self._wrapping or self._extra_home is None:
-            return
-        home, index = self._extra_home
+        self._wrapped = self._settle(self._wrapping, self._extra_home,
+                                     self._overflow_row, self._wrapped)
+        if self._stacked:
+            self._trailing_wrapped = self._settle(
+                self._trailing, self._trailing_home, self._trailing_row,
+                self._trailing_wrapped)
+
+    def _settle(self, group: list, home_at, holder, wrapped: bool) -> bool:
+        """Move one group to its own line, or bring it home. Returns where."""
+        if not group or home_at is None or holder is None:
+            return wrapped
+        home, index = home_at
         # Measured WITHOUT the travelling group, then with it added back, so
         # the answer does not depend on which row the group is sitting in.
         # Otherwise moving it changes the measurement that moved it, and it
         # flaps between the two.
-        needed = self._natural_width(home) + sum(
-            widget.sizeHint().width() + home.spacing()
-            for widget in self._wrapping)
+        needed = self._natural_width(home, group) + sum(
+            widget.sizeHint().width() + home.spacing() for widget in group)
         margin = self.contentsMargins()
         available = self.width() - margin.left() - margin.right()
-        wrapped = needed > available
-        if wrapped == self._wrapped:
-            return
-        self._wrapped = wrapped
+        now = needed > available
+        if now == wrapped:
+            return wrapped
 
-        overflow = self._overflow_row.layout()
+        overflow = holder.layout()
         # THE WHOLE GROUP MOVES, in its own order. Anything put ahead of the
         # extra range belongs with it: left behind, it ends up alone at the end
         # of a row it has nothing to do with.
-        for position, widget in enumerate(self._wrapping):
-            if wrapped:
+        for position, widget in enumerate(group):
+            if now:
                 home.removeWidget(widget)
                 overflow.insertWidget(position, widget)
             else:
                 overflow.removeWidget(widget)
                 home.insertWidget(index + position, widget)
-        self._overflow_row.setVisible(wrapped)
+        holder.setVisible(now)
+        return now
 
-    def _natural_width(self, row: QHBoxLayout) -> int:
+    def _natural_width(self, row: QHBoxLayout, group: list) -> int:
         """What a row would take if nothing in it were squeezed.
 
         The widgets' own hints rather than the layout's, which already reflects
@@ -939,7 +1007,7 @@ class FilterBarWidget(QWidget):
         for position in range(row.count()):
             item = row.itemAt(position)
             widget = item.widget()
-            if widget is not None and widget in self._wrapping:
+            if widget is not None and widget in group:
                 continue
             # A spacer counts for what it reserves, which is nothing for the
             # stretch and the inset for a trailing control's dead space.
@@ -984,7 +1052,12 @@ class FilterBarWidget(QWidget):
         returns Qt has not drawn anything: the pressed button, the ticked box
         or the cleared field would all appear only once the table had caught
         up. Painting first costs nothing and makes the click feel answered.
+
+        And a look at the rows on the way past: the date filter is as wide as
+        the mode it is showing, so picking Range makes it want room it did not
+        want a moment ago, and no resize happens to notice that.
         """
+        self._reflow()
         self.repaint()
         self.changed.emit()
 
