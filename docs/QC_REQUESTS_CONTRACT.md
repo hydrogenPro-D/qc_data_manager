@@ -217,7 +217,7 @@ nobody's behalf.
 > switch is off it raises nothing and puts a sentence in `note`, which has
 > always been NULL until now. `remaining` in `vw_vat_sampling_status` is then
 > NULL for every vat, and both that view and `vw_vat_sampling_watermark` gain a
-> `sampling_on` column at the end. See `QC_SAMPLING_SWITCH_CONTRACT.md`.
+> `sampling_on` column at the end.
 
 QC samples one electrode in every N per plating vat, N being a number QC sets
 and changes. Somebody has to notice when production has made the next one due.
