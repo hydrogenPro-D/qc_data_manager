@@ -50,6 +50,7 @@ from src.data_access.electrodes.electrode_status_db import (
     load_status_by_marking as load_status_from_db,
 )
 from src.data_access.electrodes.electrode_vat_db import load_vat_by_marking
+from src.data_access.electrodes.failure_reason_db import load_failure_reasons
 from src.data_access.electrodes.status_propagation import propagate_detailed
 from src.data_access.qc_board.qc_board_columns import (IC_FAILED, IC_RESULT,
                                                        SEM_CRACKED, SEM_RESULT)
@@ -217,6 +218,9 @@ class DbManager:
         # than the electrode list. The GUI asks for it on a worker thread once
         # it is up, see load_vats, and the column appears when it arrives.
         self._vats: dict[str, str] = {}
+        # Reasons for failures the board never saw, read on first use. None
+        # means not read yet, which is not the same as none recorded.
+        self._historic_reasons: dict[str, dict] | None = None
         # True until the process log has been read once, so the tab can show the
         # column as loading rather than as absent. A database with no process
         # log answers instantly and the column is dropped, as before.
@@ -250,7 +254,7 @@ class DbManager:
             unqueued_provider=self._unqueued_scraps,
             pinned_provider=lambda: set(self._manual_edits),
             finalised_provider=self._finalised_times,
-            findings_provider=self._qc_board.findings,
+            findings_provider=self._findings_with_history,
             revisited_provider=self._qc_board.revisited_by,
             qc_request_provider=self.get_qc_request_details)
         # Which quantities each sheet shows, from config.json. Read per
@@ -404,6 +408,25 @@ class DbManager:
         """Say what QC wants from an electrode a technician offered."""
         return coupon_db_source.set_request_coupons(
             self._session, electrode, coupons)
+
+    def _failure_reasons(self) -> dict[str, dict]:
+        """Historic reasons, read once. ``{}`` where migration 018 is absent."""
+        if self._historic_reasons is None:
+            self._historic_reasons = load_failure_reasons(self._session)
+        return self._historic_reasons
+
+    def _findings_with_history(self, marking: str) -> dict:
+        """The board's findings, falling back to the historic table.
+
+        ONLY the processor is given this, and only for the failure badge. It is
+        deliberately not what ``_unqueued_scraps`` reads: that decides which
+        failures queue their neighbours for testing, and a reason recorded for
+        an electrode judged a year ago is not a reason to queue anything now.
+        """
+        found = self._qc_board.findings(marking)
+        if any(found.values()):
+            return found
+        return self._failure_reasons().get(str(marking).strip(), found)
 
     def _unqueued_scraps(self) -> set[str]:
         """Scraps whose neighbours QC does not want tested.
