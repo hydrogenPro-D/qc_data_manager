@@ -37,9 +37,12 @@ from pathlib import Path, PureWindowsPath
 import pandas as pd
 
 from src.data_access import app_config
+from src.data_access.electrodes.archive_repair import REPAIR_LIMIT, stale_rows
 from src.data_access.electrodes.electrode_columns import (
     ElectrodeColumns,
     ElectrodeStatus,
+    LOCKED_BY_COLUMN,
+    STATUS_COLUMN,
     canonical_electrode_type,
     normalize_marking,
 )
@@ -612,6 +615,60 @@ class DbManager:
         if self._metadata_cache is None:
             return self.get_metadata()
         return self._electrodes.process(self._metadata_cache)
+
+    def repair_stale_archive_rows(self) -> int:
+        """Write down what the tab is already showing, where the archive is behind.
+
+        A frozen row is a snapshot of one finalise, and a later verdict can
+        claim the electrodes it left as placeholders. The tab re-runs the
+        sweeps and shows the newer answer; without this, the table keeps the
+        older one and every other reader of the database gets that.
+
+        Off the UI thread, once per session. It writes only where the rows
+        differ, so the usual call writes nothing at all.
+        """
+        rows = self._stale_archive_rows()
+        if not rows:
+            return 0
+        if len(rows) > REPAIR_LIMIT:
+            # The inputs are wrong, not the table. Say so and write nothing.
+            print(f"Not repairing {len(rows)} archive rows: more than the "
+                  f"{REPAIR_LIMIT} a correction should ever be.")
+            return 0
+        try:
+            return self._qc_board.repair(rows)
+        except Exception as e:
+            # Feature by presence: a database still on 018 has no such
+            # procedure, and the app works there exactly as it did before.
+            print(f"Could not bring the frozen statuses up to date: {e}")
+            return 0
+
+    def _stale_archive_rows(self) -> list[dict]:
+        """The plan, or nothing at all while the inputs are still arriving.
+
+        THE VATS DECIDE THE ANSWER, so a plan made without them is a different
+        app's opinion: a scrap spreads along one vat's electrodes, and with no
+        vat on record it falls back to the production sequence and reaches
+        other electrodes entirely. Writing that down would be worse than
+        leaving the row stale.
+        """
+        if self._vats_pending or not self._vats or self._metadata_cache is None:
+            return []
+        frame = self._electrodes.process(self._metadata_cache)
+        markings = frame[str(ElectrodeColumns.MARKING)].astype(str).str.strip()
+        shown = dict(zip(markings, frame[STATUS_COLUMN].astype(str).str.strip()))
+        held = dict(zip(markings, frame[LOCKED_BY_COLUMN].astype(str).str.strip()))
+        # A second propagation pass, for the one thing the frame does not
+        # carry: which decision claims an electrode nothing has recorded.
+        _effective, sources, _priorities, _causes = propagate_detailed(
+            list(markings), self._electrodes.base_status(),
+            self._sweeping_decisions(), vats=self._vats,
+            ongoing=set(self._qc_board.ongoing_electrodes()),
+            pinned=set(self._manual_edits),
+            unqueued=self._unqueued_scraps())
+        return stale_rows(shown, held, self._qc_board.archived_rows(), sources,
+                          set(self._qc_board.on_board()),
+                          set(self._manual_edits))
 
     def get_qc_board_store(self) -> QcBoardDbStore:
         """The QC board the GUI mutates; shared with the status override."""

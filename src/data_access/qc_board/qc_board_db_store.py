@@ -414,6 +414,15 @@ class QcBoardDbStore:
         return {marking: normalize_status(entry["status"])
                 for marking, entry in self._archived.items() if entry.get("status")}
 
+    def archived_rows(self) -> dict[str, dict]:
+        """The frozen rows as they stand, for comparing against the sweeps.
+
+        The whole entry rather than its status: what a row was drawn from is
+        what tells a verdict apart from an inference, and only inferences are
+        ever corrected.
+        """
+        return {marking: dict(entry) for marking, entry in self._archived.items()}
+
     def archived_times(self) -> dict[str, str]:
         """``{marking: when the verdict was frozen}``, to order it against a
         hand set status covering the same electrode."""
@@ -600,6 +609,36 @@ class QcBoardDbStore:
         """
         self._write("usp_electrode_status_set",
                     electrode=str(marking).strip(), status=status)
+
+    def repair(self, rows: list[dict]) -> int:
+        """Bring frozen rows up to date with what the sweeps now make of them.
+
+        The plan comes from ``archive_repair.stale_rows``; this only writes it
+        down and keeps the copy in memory in step, so the next render is drawn
+        from what the database now holds rather than from what it held at
+        startup.
+
+        Returns how many rows the procedure actually moved, which is not always
+        how many were offered: one a finalise has touched since the plan was
+        made is left to that finalise.
+        """
+        if not rows:
+            return 0
+        answer = self._write("usp_qc_board_repair", rows=json.dumps(rows))
+        moved = int(answer[0].get("repaired") or 0) if answer else 0
+        if not moved:
+            return 0
+        for row in rows:
+            marking = str(row["electrode"]).strip()
+            entry = self._archived.get(marking)
+            if entry is None:
+                self._archived[marking] = {
+                    "status": row["status"], "from": row["caused_by"],
+                    "at": str(row.get("archived_at_utc") or ""),
+                    "priority": False}
+            else:
+                self._archived[marking] = {**entry, "status": row["status"]}
+        return moved
 
     def archive(self, frozen: dict[str, tuple[str, str]],
                 priorities: set[str] | None = None,

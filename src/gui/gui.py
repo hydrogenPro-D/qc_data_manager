@@ -315,6 +315,10 @@ class MainWindow(QMainWindow):
         # Which tabs are still showing a placeholder, so the poll timer does
         # not ask about a table that has not had its first read.
         self._awaiting = {"electrodes", "sem_edx"}
+        # The frozen statuses are brought up to date once per session, after
+        # the two reads they are computed from have landed. See
+        # _repair_stale_statuses.
+        self._statuses_repaired = False
 
         self._poll_thread.start()
         # THE VATS GO FIRST, ahead of the electrodes that are actually on
@@ -371,6 +375,25 @@ class MainWindow(QMainWindow):
         # cannot be handed to somebody else's callback.
         self._background_done.append(None)
         self.background_requested.emit(self.backend.raise_outstanding_requests)
+
+    def _repair_stale_statuses(self) -> None:
+        """Let the database catch up with what this window is showing.
+
+        Once a session, and only once both the electrodes and the vats are in:
+        the statuses are computed from the vats, so a sweep run without them is
+        a different answer and must never be written down.
+
+        Off the UI thread, and nothing is rendered from it. What it writes is
+        what the table already says, so there is nothing new to show; the next
+        poll notices the rows moved and reloads once.
+        """
+        if getattr(self, "backend", None) is None or self._statuses_repaired:
+            return
+        if self._awaiting & {"electrodes"} or self.backend.vats_pending():
+            return
+        self._statuses_repaired = True
+        self._background_done.append(None)
+        self.background_requested.emit(self.backend.repair_stale_archive_rows)
 
     def _warn_if_not_production(self) -> None:
         """Say so, in the tab bar's corner, when this is not the real database.
@@ -697,6 +720,10 @@ class MainWindow(QMainWindow):
                                            reload=True)
         except Exception as e:
             print(f"Applying the deferred {key} read failed: {e}")
+        # After the branches, not inside one: either read can be the last to
+        # arrive, and it takes both of them.
+        if key in ("electrodes", "vats"):
+            self._repair_stale_statuses()
 
     def _on_polled(self, key: str, result) -> None:
         """Render what the worker found. Back on the UI thread."""
