@@ -16,11 +16,14 @@ from src.data_access.sem_edx.sem_edx_columns import (
     element_column,
     point_column,
 )
+from src.data_access.sem_edx.sem_note_rules import CATEGORIES, MICROCRACKS
 from src.gui.sem_edx_gui import (
     EMPTY,
+    NO_RESULT,
     GEN4_1_LABEL,
     ImagePickerDialog,
     ImportSummaryDialog,
+    ManualSampleDialog,
     QuantityNames,
     SemEdxTypeWidget,
     SemSampleDialog,
@@ -209,9 +212,10 @@ class TestSemEdxTypeWidget(unittest.TestCase):
         self.assertEqual(self.widget.table.rowCount(), 1)
         self.assertEqual(self._cell(0, "Electrode"), "B14023")
 
-    def test_the_note_column_is_never_truncated(self) -> None:
+    def test_the_comment_column_is_never_truncated(self) -> None:
+        """The result is five known words wide; the comment is a sentence."""
         self.widget.load_data(pd.DataFrame([sample()]))
-        self.assertEqual(self.widget.table.uncapped_columns, {"Notes"})
+        self.assertEqual(self.widget.table.uncapped_columns, {"Comments"})
 
     def test_a_row_without_a_folder_shows_a_dash_not_a_button(self) -> None:
         self.widget.load_data(pd.DataFrame([sample(folder="")]))
@@ -399,16 +403,20 @@ class TestSemEdxWidget(unittest.TestCase):
         result.measurements = [_Measured("B14134", "top right") for _ in range(3)]
         with patch("src.gui.sem_edx_gui.ImportSummaryDialog") as dialog:
             dialog.return_value.operator = "Tamas Pakai"
-            # The zoom, the note and the back button all read false on an
-            # untouched dialog. A mock would otherwise hand back truthy objects,
-            # so the fields would be sent as if typed and the import would be
-            # read as having been sent back for another go at the captures.
+            # The zoom and the back button read false on an untouched dialog.
+            # A mock would otherwise hand back truthy objects, so the fields
+            # would be sent as if typed and the import would be read as having
+            # been sent back for another go at the captures.
             dialog.return_value.zoom = ""
-            dialog.return_value.note = ""
+            dialog.return_value.note = MICROCRACKS
+            dialog.return_value.comment = "white deposit near the edge"
             dialog.return_value.back = False
             values = self.widget.generations[GEN4_1_LABEL]._confirm_import(
                 result, [], "B14134")
-        self.assertEqual(values, {str(SemEdxColumns.OPERATOR): "Tamas Pakai"})
+        self.assertEqual(values,
+                         {str(SemEdxColumns.OPERATOR): "Tamas Pakai",
+                          str(SemEdxColumns.NOTE): MICROCRACKS,
+                          str(SemEdxColumns.COMMENT): "white deposit near the edge"})
         self.assertTrue(dialog.call_args.kwargs["ask_operator"])
 
     def test_an_empty_operator_stamps_nothing(self) -> None:
@@ -418,6 +426,7 @@ class TestSemEdxWidget(unittest.TestCase):
             dialog.return_value.operator = ""
             dialog.return_value.zoom = ""
             dialog.return_value.note = ""
+            dialog.return_value.comment = ""
             dialog.return_value.back = False
             values = self.widget.generations[GEN4_1_LABEL]._confirm_import(
                 result, [], "B14134")
@@ -491,14 +500,47 @@ class TestSemEdxWidget(unittest.TestCase):
         self.assertIsNone(without.operator_input)
         self.assertTrue(without.ok_button.isEnabled())
 
-    def test_ok_stays_shut_until_a_name_is_typed(self) -> None:
+    def test_ok_stays_shut_until_the_name_and_the_result_are_both_there(self) -> None:
         dialog = ImportSummaryDialog(
             None, title="Imported", lines=["done"], ask_operator=True)
         self.assertFalse(dialog.ok_button.isEnabled())
         dialog.operator_input.setText("  Tamas Pakai  ")
+        # A name alone is not enough: the sample would land with no result.
+        self.assertFalse(dialog.ok_button.isEnabled())
+        dialog.note_input.setCurrentText(MICROCRACKS)
         self.assertTrue(dialog.ok_button.isEnabled())
         dialog._on_accept()
-        self.assertEqual(dialog.operator, "Tamas Pakai")
+        self.assertEqual((dialog.operator, dialog.note),
+                         ("Tamas Pakai", MICROCRACKS))
+
+    def test_the_comment_is_taken_but_never_required(self) -> None:
+        dialog = ImportSummaryDialog(
+            None, title="Imported", lines=["done"], ask_operator=True,
+            operator_hint="Tamas Pakai", note_hint=MICROCRACKS)
+        # The five say what the plate is; this says whatever else was seen.
+        self.assertTrue(dialog.ok_button.isEnabled())
+        dialog.comment_input.setText("  white deposit near the edge  ")
+        dialog._on_accept()
+        self.assertEqual(dialog.comment, "white deposit near the edge")
+
+    def test_a_result_taken_back_shuts_it_again(self) -> None:
+        dialog = ImportSummaryDialog(
+            None, title="Imported", lines=["done"], ask_operator=True,
+            operator_hint="Tamas Pakai", note_hint=MICROCRACKS)
+        self.assertTrue(dialog.ok_button.isEnabled())
+        dialog.note_input.setCurrentText(NO_RESULT)
+        self.assertFalse(dialog.ok_button.isEnabled())
+        dialog._on_accept()          # Enter with no result must not close it
+        self.assertEqual(dialog.result(), 0)
+
+    def test_the_captures_can_be_chosen_again_with_the_boxes_empty(self) -> None:
+        """Going back is the opposite of finishing, so it asks for nothing."""
+        dialog = ImportSummaryDialog(
+            None, title="Imported", lines=["done"], ask_operator=True,
+            allow_back=True)
+        dialog._on_back()
+        self.assertTrue(dialog.back)
+        self.assertEqual((dialog.operator, dialog.note), ("", ""))
 
     def test_whitespace_alone_does_not_open_it(self) -> None:
         dialog = ImportSummaryDialog(
@@ -507,6 +549,38 @@ class TestSemEdxWidget(unittest.TestCase):
         self.assertFalse(dialog.ok_button.isEnabled())
         dialog._on_accept()          # Enter in an empty field must not close it
         self.assertEqual(dialog.result(), 0)
+
+    def _manual_dialog(self):
+        """The window offered when a folder cannot be read at all."""
+        dialog = ManualSampleDialog(
+            None, generation=GEN4_1_LABEL, folder="results",
+            electrode="B14050", types=["ANODE"], electrode_type="ANODE",
+            generations=[GEN4_1_LABEL],
+            elements_for=lambda _generation, _type: ["Ni", "S"])
+        dialog.position_input.setText("top left")
+        dialog._inputs[(1, "Ni")].setText("24.5")
+        return dialog
+
+    def test_a_typed_in_sample_needs_a_result_too(self) -> None:
+        dialog = self._manual_dialog()
+        dialog.operator_input.setText("Tamas Pakai")
+        with patch("src.gui.sem_edx_gui.report") as told:
+            dialog._on_save()
+        self.assertIsNone(dialog.saved)
+        self.assertIn("A result has to be chosen.", told.call_args.args[2])
+
+    def test_a_typed_in_sample_carries_what_was_chosen(self) -> None:
+        dialog = self._manual_dialog()
+        dialog.operator_input.setText("  Tamas Pakai  ")
+        dialog.note_input.setCurrentText(MICROCRACKS)
+        dialog.comment_input.setText("  cut in a random corner  ")
+        with patch("src.gui.sem_edx_gui.ConfirmationDialog") as ask:
+            # No captures were chosen, which is asked about rather than refused.
+            ask.return_value.exec.return_value = ask.DialogCode.Accepted
+            dialog._on_save()
+        self.assertEqual((dialog.saved["operator"], dialog.saved["note"],
+                          dialog.saved["comment"]),
+                         ("Tamas Pakai", MICROCRACKS, "cut in a random corner"))
 
     def test_a_skipped_type_prompt_returns_nothing(self) -> None:
         with patch("src.gui.sem_edx_gui.ElectrodeTypeDialog") as dialog:
@@ -597,6 +671,57 @@ class TestImageViewer(unittest.TestCase):
         self.assertFalse(viewer.previous_button.isEnabled())
         self.assertFalse(viewer.next_button.isEnabled())
         viewer._step(1)          # must not raise
+
+
+class TestTheResultIsChosen(unittest.TestCase):
+    """Five opinions used to arrive in 163 spellings. Not any more."""
+
+    @staticmethod
+    def _dialog(note: str = "", comment: str = "") -> "SemSampleDialog":
+        return SemSampleDialog(
+            None, names=QuantityNames(["Ni"]), electrode="B13698",
+            position="top right", note=note, comment=comment,
+            measurements=pd.DataFrame())
+
+    def test_it_offers_the_five_and_nothing_else(self) -> None:
+        dialog = self._dialog()
+        offered = [dialog._result.itemText(i)
+                   for i in range(dialog._result.count())]
+        self.assertEqual(offered, [NO_RESULT, *CATEGORIES])
+
+    def test_it_cannot_be_typed_into(self) -> None:
+        """The whole point: a box you can type in is a box that collects
+        Mickrocracked."""
+        dialog = self._dialog()
+        self.assertFalse(dialog._result.isEditable())
+
+    def test_it_opens_on_the_samples_own_result(self) -> None:
+        dialog = self._dialog(note="Less cracked")
+        self.assertEqual(dialog._result.currentText(), "Less cracked")
+
+    def test_a_sample_with_no_result_opens_on_not_set(self) -> None:
+        dialog = self._dialog()
+        self.assertEqual(dialog._result.currentText(), NO_RESULT)
+
+    def test_an_old_free_text_note_is_kept_rather_than_dropped(self) -> None:
+        """Before the transformation runs, every note is one of these. Showing
+        it as Not set would quietly rewrite it on the next save."""
+        dialog = self._dialog(note="Mickrocracked")
+        self.assertEqual(dialog._result.currentText(), "Mickrocracked")
+
+    def test_what_the_window_hands_back(self) -> None:
+        dialog = self._dialog(note="Fine", comment="Vat 30, first after a clean")
+        dialog._result.setCurrentText("Cracked")
+        dialog._on_save()
+        self.assertEqual(dialog.values[str(SemEdxColumns.NOTE)], "Cracked")
+        self.assertEqual(dialog.values[str(SemEdxColumns.COMMENT)],
+                         "Vat 30, first after a clean")
+
+    def test_not_set_hands_back_nothing_at_all(self) -> None:
+        dialog = self._dialog(note="Fine")
+        dialog._result.setCurrentText(NO_RESULT)
+        dialog._on_save()
+        self.assertEqual(dialog.values[str(SemEdxColumns.NOTE)], "")
 
 
 class TestSampleDialog(unittest.TestCase):

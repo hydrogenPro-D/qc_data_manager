@@ -31,7 +31,13 @@ class SemEdxColumns(Enum):
     ZOOM = "zoom"
     MEASUREMENT = "measurement"
     OPERATOR = "operator"
+    # The verdict, one of sem_note_rules.CATEGORIES. Free text until
+    # migration 020; a list since, so five opinions stop arriving in 163
+    # spellings and something can finally count them.
     NOTE = "note"
+    # Everything else the operator wants to record about the sample. Where the
+    # old free text went when it said more than its verdict.
+    COMMENT = "comment"
     # When the sample was measured. The workbook records no date at all, so
     # this is empty for everything imported from it and filled for everything
     # read out of a result folder.

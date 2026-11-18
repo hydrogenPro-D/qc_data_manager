@@ -953,9 +953,9 @@ class DbManager:
             if column in df.columns:
                 df.loc[match, column] = value
 
-        # The procedure writes all three fields, so a caller setting one has to
-        # send the other two back as they are. Passing only the operator used to
-        # blank the zoom the import had just read off the image sidecars.
+        # The procedure writes every field, so a caller setting one has to send
+        # the others back as they are. Passing only the operator used to blank
+        # the zoom the import had just read off the image sidecars.
         current = df.loc[match].iloc[0]
 
         def field(column: str) -> str:
@@ -968,7 +968,8 @@ class DbManager:
             self._session, generation, electrode, position,
             zoom=field(SemEdxColumns.ZOOM),
             operator=field(SemEdxColumns.OPERATOR),
-            note=field(SemEdxColumns.NOTE))
+            note=field(SemEdxColumns.NOTE),
+            comment=field(SemEdxColumns.COMMENT))
         self._sem_edx_caches[generation] = df
         return True
 

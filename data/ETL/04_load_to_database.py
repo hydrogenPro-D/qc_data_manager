@@ -65,6 +65,7 @@ from src.data_access.sem_edx.sem_edx_source import (  # noqa: E402
     measured_columns,
 )
 from src.data_access.sem_edx.sem_edx_columns import element_symbol  # noqa: E402
+from src.data_access.sem_edx.sem_note_rules import classify  # noqa: E402
 
 import pandas as pd  # noqa: E402
 
@@ -194,11 +195,17 @@ def read_sem_measurements() -> tuple[list, list, list, list]:
                 known["folder"] = str(row.get("folder", "")).strip()
 
             key = (*marking_key, position)
+            # The workbook's note is free text and the column is a verdict from
+            # a list, so it is read the same way migration 020's transformation
+            # read the ones already in the database. One classifier, so a
+            # reload cannot put back what that transformation took out.
+            verdict, comment = classify(row.get("note", ""))
             samples.setdefault(key, (
                 *key,
                 str(row.get("zoom", "")).strip(),
                 str(row.get("operator", "")).strip(),
-                str(row.get("note", "")).strip(),
+                verdict,
+                comment,
                 str(row.get("date", "")).strip()))
             if key not in images:
                 images[key] = split_images(row.get("images", ""))
@@ -465,10 +472,11 @@ def main() -> int:
             types={"folder": "NVARCHAR(400)"}))
         report("sem_sample", merge(
             cursor, "sem_sample",
-            [*sample_key, "zoom", "operator", "note", "measured_on"],
+            [*sample_key, "zoom", "operator", "note", "comment", "measured_on"],
             sample_key, samples, args.prune,
             types={"zoom": "NVARCHAR(16)", "operator": "NVARCHAR(128)",
-                   "note": "NVARCHAR(512)", "measured_on": "DATE"}))
+                   "note": "NVARCHAR(512)", "comment": "NVARCHAR(1024)",
+                   "measured_on": "DATE"}))
         report("sem_element_reading", merge(
             cursor, "sem_element_reading", [*point_key, "symbol", "value"],
             [*point_key, "symbol"], readings, args.prune,

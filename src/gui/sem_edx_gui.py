@@ -71,6 +71,7 @@ from src.data_access.sem_edx.sem_edx_columns import (
     average_column,
     quantities,
 )
+from src.data_access.sem_edx.sem_note_rules import CATEGORIES
 
 GEN4_1_LABEL = "Gen4.1"
 
@@ -91,7 +92,10 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     str(SemEdxColumns.OPERATOR): "Operator",
     str(SemEdxColumns.DATE): "Date",
     str(SemEdxColumns.FOLDER): "SEM images",
-    str(SemEdxColumns.NOTE): "Notes",
+    # "Result", not "Notes": since migration 020 this column holds one of
+    # five fixed answers, and the typing moved next door.
+    str(SemEdxColumns.NOTE): "Result",
+    str(SemEdxColumns.COMMENT): "Comments",
 }
 
 # What a sub tab is called. Anything not listed is title cased as it comes.
@@ -221,6 +225,37 @@ IMAGE_BUTTON_MISSING_STYLE = """
     QPushButton:hover { background-color: #FEE2E2; border-color: #F87171; }
     QPushButton:pressed { background-color: #FECACA; }
 """
+
+
+# What an unanswered result reads as in the list. First, so the box opens on
+# "nothing chosen" rather than on Fine, which would make the mildest result
+# the one a distracted operator saves by accident.
+NO_RESULT = "Not set"
+
+
+def result_box(current: str = "") -> NoScrollComboBox:
+    """The five results, worst last, with the sample's own selected.
+
+    One place, so the sample window and the import dialog can never drift into
+    offering different words. A result the list has not heard of is added at
+    the end rather than silently becoming Not set: on a database where the
+    transformation has not run yet, every old note is one of those.
+    """
+    box = NoScrollComboBox()
+    box.setMinimumHeight(32)
+    box.setStyleSheet(COMBO_BOX_STYLE)
+    box.addItems([NO_RESULT, *CATEGORIES])
+    chosen = str(current or "").strip()
+    if chosen and chosen not in CATEGORIES:
+        box.addItem(chosen)
+    box.setCurrentText(chosen or NO_RESULT)
+    return box
+
+
+def chosen_result(box: NoScrollComboBox) -> str:
+    """What a result box says, with Not set read as nothing at all."""
+    text = box.currentText().strip()
+    return "" if text == NO_RESULT else text
 
 
 def type_label(electrode_type: str) -> str:
@@ -661,6 +696,12 @@ class ManualSampleDialog(QDialog):
         self.position_input = self._field("", "where on the electrode")
         self.zoom_input = self._field("", "e.g. 500x")
         self.date_input = self._field("", "yyyy-mm-dd")
+        # Asked here for the same reason the import asks: nothing that reaches
+        # this window names who ran the microscope or what they decided, and a
+        # sample saved without them is one somebody has to come back to.
+        self.operator_input = self._field("", "who ran the microscope")
+        self.note_input = result_box()
+        self.comment_input = self._field("", "anything else worth recording")
 
         # Which generation, rather than whichever tab the import was started
         # from: a folder picked from the wrong tab is the likeliest reason a
@@ -700,6 +741,13 @@ class ManualSampleDialog(QDialog):
         for column, (caption, widget) in enumerate(bottom):
             form.addWidget(self._caption(caption), 2, column)
             form.addWidget(widget, 3, column)
+        last = (("Operator name", self.operator_input),
+                (COLUMN_DISPLAY_NAMES[str(SemEdxColumns.NOTE)], self.note_input),
+                (COLUMN_DISPLAY_NAMES[str(SemEdxColumns.COMMENT)],
+                 self.comment_input))
+        for column, (caption, widget) in enumerate(last):
+            form.addWidget(self._caption(caption), 4, column)
+            form.addWidget(widget, 5, column)
 
         self.grid_host = QWidget()
         self.grid = QGridLayout()
@@ -874,6 +922,12 @@ class ManualSampleDialog(QDialog):
             problems.append("A position is needed.")
         if not readings:
             problems.append("No measurements were typed in.")
+        if not self.operator_input.text().strip():
+            problems.append("An operator name is needed.")
+        if not chosen_result(self.note_input):
+            problems.append(
+                f"A {COLUMN_DISPLAY_NAMES[str(SemEdxColumns.NOTE)].lower()} "
+                f"has to be chosen.")
         if problems:
             report(self, "That cannot be saved yet", sorted(problems), error=True)
             return
@@ -895,6 +949,9 @@ class ManualSampleDialog(QDialog):
             "position": self.position_input.text().strip(),
             "zoom": self.zoom_input.text().strip(),
             "date": self.date_input.text().strip(),
+            "operator": self.operator_input.text().strip(),
+            "note": chosen_result(self.note_input),
+            "comment": self.comment_input.text().strip(),
             "readings": readings,
             "images": list(self._chosen_images),
             "folder": self.image_folder,
@@ -1132,11 +1189,13 @@ class ImportSummaryDialog(QDialog):
     def __init__(self, parent=None, title: str = "", lines: list[str] | None = None,
                  ask_operator: bool = False, error: bool = False,
                  zoom_hint: str = "", allow_back: bool = False,
-                 operator_hint: str = "", note_hint: str = "") -> None:
+                 operator_hint: str = "", note_hint: str = "",
+                 comment_hint: str = "") -> None:
         super().__init__(parent)
         self.operator: str = ""
         self.zoom: str = ""
         self.note: str = ""
+        self.comment: str = ""
         # Set when the operator wants to answer the capture question again.
         self.back = False
 
@@ -1169,7 +1228,8 @@ class ImportSummaryDialog(QDialog):
 
         self.operator_input: QLineEdit | None = None
         self.zoom_input: QLineEdit | None = None
-        self.note_input: QLineEdit | None = None
+        self.note_input: NoScrollComboBox | None = None
+        self.comment_input: QLineEdit | None = None
         body = QVBoxLayout()
         body.setContentsMargins(20, 16, 20, 16)
         body.setSpacing(12)
@@ -1185,8 +1245,13 @@ class ImportSummaryDialog(QDialog):
             # anything is typed, taking the answer with it.
             self.zoom_input = self._field("", self._on_accept)
             self.zoom_input.setText(zoom_hint)
-            self.note_input = self._field("", self._on_accept)
-            self.note_input.setText(note_hint)
+            # Chosen, not typed, and the same five the sample window offers.
+            self.note_input = result_box(note_hint)
+            # Under the result, and never required: the five say what the plate
+            # is, this says whatever else was seen down the microscope.
+            self.comment_input = self._field("anything else worth recording",
+                                             self._on_accept)
+            self.comment_input.setText(comment_hint)
 
             fields = QGridLayout()
             fields.setContentsMargins(0, 0, 0, 0)
@@ -1197,8 +1262,13 @@ class ImportSummaryDialog(QDialog):
                     ("Zoom", self.zoom_input))):
                 fields.addWidget(self._caption(label), 0, column)
                 fields.addWidget(widget, 1, column)
-            fields.addWidget(self._caption("Note"), 2, 0, 1, 2)
-            fields.addWidget(self.note_input, 3, 0, 1, 2)
+            for row, (column, widget) in enumerate((
+                    (SemEdxColumns.NOTE, self.note_input),
+                    (SemEdxColumns.COMMENT, self.comment_input))):
+                fields.addWidget(
+                    self._caption(COLUMN_DISPLAY_NAMES[str(column)]),
+                    2 + row * 2, 0, 1, 2)
+                fields.addWidget(widget, 3 + row * 2, 0, 1, 2)
             body.addLayout(fields)
 
         self.ok_button = QPushButton("OK")
@@ -1209,16 +1279,15 @@ class ImportSummaryDialog(QDialog):
         self.ok_button.clicked.connect(self._on_accept)
 
         if self.operator_input is not None:
-            # Held shut until a name is typed: the operator is the one thing
-            # the export cannot supply, and it is far easier to enter now than
-            # to notice the blank column later.
-            # From what is in the box, not simply shut: coming back from the
-            # captures the name is already there, and a disabled OK beside a
+            # Held shut until the name and the result are both answered: they
+            # are what the export cannot supply, and both are far easier to
+            # enter now than to notice missing in a column later.
+            # From what is in the boxes, not simply shut: coming back from the
+            # captures they are already filled in, and a disabled OK beside a
             # filled-in field reads as the window being stuck.
-            self.ok_button.setEnabled(bool(self.operator_input.text().strip()))
-            self.ok_button.setToolTip("Enter the operator name first")
-            self.operator_input.textChanged.connect(
-                lambda text: self.ok_button.setEnabled(bool(text.strip())))
+            self.operator_input.textChanged.connect(self._refresh_ok)
+            self.note_input.currentTextChanged.connect(self._refresh_ok)
+            self._refresh_ok()
 
         buttons = QHBoxLayout()
         if allow_back:
@@ -1246,6 +1315,23 @@ class ImportSummaryDialog(QDialog):
         if self.operator_input is not None:
             self.operator_input.setFocus()
 
+    def _missing(self) -> str:
+        """Why OK is shut, or '' when there is nothing left to answer."""
+        if self.operator_input is None:
+            return ""
+        if not self.operator_input.text().strip():
+            return "Enter the operator name first"
+        if self.note_input is not None and not chosen_result(self.note_input):
+            result = COLUMN_DISPLAY_NAMES[str(SemEdxColumns.NOTE)].lower()
+            return f"Choose a {result} first"
+        return ""
+
+    def _refresh_ok(self) -> None:
+        """OK follows the boxes, and says what it is waiting for."""
+        reason = self._missing()
+        self.ok_button.setEnabled(not reason)
+        self.ok_button.setToolTip(reason)
+
     def _on_back(self) -> None:
         """Answer nothing, and ask for the folder to be read again.
 
@@ -1255,7 +1341,9 @@ class ImportSummaryDialog(QDialog):
         if self.operator_input is not None:
             self.operator = self.operator_input.text().strip()
             self.zoom = self.zoom_input.text().strip() if self.zoom_input else ""
-            self.note = self.note_input.text().strip() if self.note_input else ""
+            self.note = chosen_result(self.note_input) if self.note_input else ""
+            self.comment = (self.comment_input.text().strip()
+                            if self.comment_input else "")
         self.back = True
         self.done(QDialog.DialogCode.Rejected)
 
@@ -1276,13 +1364,15 @@ class ImportSummaryDialog(QDialog):
 
     def _on_accept(self) -> None:
         if self.operator_input is not None:
+            if self._missing():
+                return          # Enter pressed with something still blank.
             self.operator = self.operator_input.text().strip()
-            if not self.operator:
-                return          # Enter pressed in an empty field.
-            # Both optional: an empty one is not sent, so the zoom the import
-            # read stays as it is rather than being overwritten with nothing.
+            # The zoom stays optional: an empty one is not sent, so what the
+            # import read off the sidecars is left as it is.
             self.zoom = self.zoom_input.text().strip() if self.zoom_input else ""
-            self.note = self.note_input.text().strip() if self.note_input else ""
+            self.note = chosen_result(self.note_input) if self.note_input else ""
+            self.comment = (self.comment_input.text().strip()
+                            if self.comment_input else "")
         self.accept()
 
 
@@ -1448,13 +1538,15 @@ class SemSampleDialog(QDialog):
 
     The Word report carries the composition, the operator and the date; the
     magnification comes off the image sidecar and the electrode type out of the
-    database. What is left, and what this form is for, is the note, and any of
-    the rest that a folder happened not to contain.
+    database. What is left, and what this form is for, is the result, the
+    comment beside it, and any of the rest that a folder happened not to
+    contain.
     """
 
     def __init__(self, parent=None, names: QuantityNames | None = None, on_save=None,
                  electrode: str = "", position: str = "", electrode_type: str = "",
-                 operator: str = "", zoom: str = "", note: str = "", date: str = "",
+                 operator: str = "", zoom: str = "", note: str = "",
+                 comment: str = "", date: str = "",
                  measurements: pd.DataFrame | None = None) -> None:
         super().__init__(parent)
         self.values: dict[str, str] = {}
@@ -1498,7 +1590,7 @@ class SemSampleDialog(QDialog):
         for row, (column, current) in enumerate((
                 (str(SemEdxColumns.ZOOM), zoom),
                 (str(SemEdxColumns.OPERATOR), operator),
-                (str(SemEdxColumns.NOTE), note))):
+                (str(SemEdxColumns.COMMENT), comment))):
             caption = QLabel(COLUMN_DISPLAY_NAMES[column])
             caption.setStyleSheet("color: #6B6B6B; font-size: 12px;")
             field = QLineEdit(current)
@@ -1506,8 +1598,21 @@ class SemSampleDialog(QDialog):
             field.setStyleSheet(INPUT_FIELD_STYLE)
             self._inputs[column] = field
             form.addWidget(caption, row, 0)
-            form.addWidget(field, row, 1)
+            # The comment takes the whole width: it is the one field here with
+            # a sentence in it, and the result beside it is five known words.
+            span = 3 if column == str(SemEdxColumns.COMMENT) else 1
+            form.addWidget(field, row, 1, 1, span)
+
+        # THE RESULT IS CHOSEN, NOT TYPED. Five opinions used to arrive in 163
+        # spellings, which is what made them impossible to count. Above the
+        # free text, because it is the answer and the rest is the detail.
+        self._result = result_box(note)
+        result_caption = QLabel(COLUMN_DISPLAY_NAMES[str(SemEdxColumns.NOTE)])
+        result_caption.setStyleSheet("color: #6B6B6B; font-size: 12px;")
+        form.addWidget(result_caption, 0, 2)
+        form.addWidget(self._result, 0, 3)
         form.setColumnStretch(1, 1)
+        form.setColumnStretch(3, 1)
 
         save_button = QPushButton("Save")
         save_button.setMinimumHeight(38)
@@ -1676,6 +1781,7 @@ class SemSampleDialog(QDialog):
             return
         self.values = {column: field.text().strip()
                        for column, field in self._inputs.items()}
+        self.values[str(SemEdxColumns.NOTE)] = chosen_result(self._result)
         if not callable(self.on_save):
             self.accept()
             return
@@ -1837,10 +1943,11 @@ class SemEdxTypeWidget(QWidget):
         self.table.setSelectionMode(self.table.SelectionMode.NoSelection)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.table.verticalHeader().setVisible(False)
-        # The note is the one free-text column, so it is sized to its full
+        # The comment is the one free-text column, so it is sized to its full
         # content rather than capped like the numbers. It is the last column,
         # so the width it takes only ever costs horizontal scrolling.
-        self.table.set_uncapped_columns({COLUMN_DISPLAY_NAMES[str(SemEdxColumns.NOTE)]})
+        self.table.set_uncapped_columns(
+            {COLUMN_DISPLAY_NAMES[str(SemEdxColumns.COMMENT)]})
         # Any width left over is shared out, so the table fills the pane
         # without a column ever being squeezed below its content.
         self.table.set_fill_remaining_width(True)
@@ -2185,6 +2292,7 @@ class SemEdxTypeWidget(QWidget):
             operator=text(SemEdxColumns.OPERATOR),
             zoom=text(SemEdxColumns.ZOOM),
             note=text(SemEdxColumns.NOTE),
+            comment=text(SemEdxColumns.COMMENT),
             date=text(SemEdxColumns.DATE),
             measurements=measurements,
             # Saved while the window is still up, so it closes onto a table
@@ -2602,13 +2710,15 @@ class SemEdxGenerationWidget(QWidget):
                 # What was typed last time round beats what the sidecars read.
                 zoom_hint=remembered.get("zoom") or self._zoom_of(result),
                 operator_hint=remembered.get("operator", ""),
-                note_hint=remembered.get("note", ""))
+                note_hint=remembered.get("note", ""),
+                comment_hint=remembered.get("comment", ""))
             self._prepare_dialog(dialog)
             dialog.exec()
         # Taken whichever button was pressed, so a trip back to the captures
         # comes back to the same boxes.
         self._remembered_fields = {"operator": dialog.operator,
-                                   "zoom": dialog.zoom, "note": dialog.note}
+                                   "zoom": dialog.zoom, "note": dialog.note,
+                                   "comment": dialog.comment}
         if getattr(dialog, "back", False):
             # Refuse this pass. _guarded_import reads the folder again, which
             # puts every question a second time.
@@ -2628,6 +2738,8 @@ class SemEdxGenerationWidget(QWidget):
             values[str(SemEdxColumns.ZOOM)] = dialog.zoom
         if dialog.note:
             values[str(SemEdxColumns.NOTE)] = dialog.note
+        if dialog.comment:
+            values[str(SemEdxColumns.COMMENT)] = dialog.comment
         return values
 
     def current_type(self) -> str:
@@ -2683,6 +2795,22 @@ class SemEdxGenerationWidget(QWidget):
         except Exception as e:
             report(self, "The sample could not be saved", [str(e)], error=True)
             return
+
+        # Written first and stamped second, the two steps an import takes: the
+        # import procedure carries no operator and no result.
+        if callable(self.on_update_sample):
+            try:
+                self.on_update_sample(
+                    generation, entry["electrode"], entry["position"],
+                    {str(SemEdxColumns.OPERATOR): entry["operator"],
+                     str(SemEdxColumns.NOTE): entry["note"],
+                     str(SemEdxColumns.COMMENT): entry["comment"]})
+            except Exception as e:
+                # Said out loud: the row is on the tab either way, and a blank
+                # result nobody was told about is the thing being prevented.
+                report(self, "The sample was saved without its result",
+                       [str(e), f"Open {entry['electrode']} "
+                        f"{entry['position']} and set it there."], error=True)
 
         self.data_changed.emit(self.generation)
         # Only this generation's tabs are ours to scroll. Another generation's
