@@ -105,13 +105,14 @@ class TestSummaryColumns(unittest.TestCase):
         self.assertEqual(columns[:4], [ELECTRODE, str(SemEdxColumns.ELECTRODE_TYPE),
                                        POSITION, str(SemEdxColumns.ZOOM)])
         # The per electrode average sits where the workbook puts it, after the
-        # operator and before the note.
-        self.assertEqual(columns[-6:], [str(SemEdxColumns.OPERATOR),
+        # operator and before the verdict, which the comment follows.
+        self.assertEqual(columns[-7:], [str(SemEdxColumns.OPERATOR),
                                         electrode_average_column("ni_s"),
                                         str(SemEdxColumns.DATE),
                                         str(SemEdxColumns.FOLDER),
                                         str(SemEdxColumns.IMAGES),
-                                        str(SemEdxColumns.NOTE)])
+                                        str(SemEdxColumns.NOTE),
+                                        str(SemEdxColumns.COMMENT)])
 
 
 class TestProcess(unittest.TestCase):

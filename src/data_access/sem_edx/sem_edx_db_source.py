@@ -105,6 +105,9 @@ def _fixed_fields(row: dict, point) -> dict:
         str(SemEdxColumns.MEASUREMENT): int(point) if point is not None else 0,
         str(SemEdxColumns.OPERATOR): str(row.get("operator") or ""),
         str(SemEdxColumns.NOTE): str(row.get("note") or ""),
+        # Feature by presence: a database still on 019 returns no such column
+        # and every sample reads as having no comment, which is what it had.
+        str(SemEdxColumns.COMMENT): str(row.get("comment") or ""),
         str(SemEdxColumns.DATE): str(row.get("measured_on") or ""),
         str(SemEdxColumns.FOLDER): str(row.get("folder") or ""),
         str(SemEdxColumns.IMAGES): join_images(split_images(row.get("images"))),
@@ -157,12 +160,28 @@ def import_measurements(session, generation: str, electrode: str,
 
 
 def update_sample(session, generation: str, electrode: str, position: str,
-                  zoom: str = "", operator: str = "", note: str = "") -> bool:
-    """Set the by-hand fields on one sample. False if there is no such sample."""
-    result = session.call(
-        f"[{SCHEMA}].[usp_sem_sample_update]",
-        generation=str(generation).strip(), electrode=str(electrode).strip(),
-        position=str(position).strip(), zoom=zoom, operator=operator, note=note)
+                  zoom: str = "", operator: str = "", note: str = "",
+                  comment: str = "") -> bool:
+    """Set the by-hand fields on one sample. False if there is no such sample.
+
+    The note is a result the procedure checks against
+    ``sem_classification_type``, so a word that is not one of the five is
+    refused there rather than stored.
+    """
+    fields = dict(generation=str(generation).strip(),
+                  electrode=str(electrode).strip(),
+                  position=str(position).strip(),
+                  zoom=zoom, operator=operator, note=note)
+    try:
+        result = session.call(f"[{SCHEMA}].[usp_sem_sample_update]",
+                              comment=comment, **fields)
+    except Exception as e:
+        # Feature by presence: a database still on 019 has no @comment, and a
+        # sample still has to be saveable there. Only that one error, so a
+        # refused verdict or a dead connection is still reported.
+        if "@comment" not in str(e):
+            raise
+        result = session.call(f"[{SCHEMA}].[usp_sem_sample_update]", **fields)
     return bool(result and result[0].get("changed"))
 
 

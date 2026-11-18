@@ -59,8 +59,8 @@ class SemEdxProcessor:
     # the whole sample, so the first measurement's value speaks for all of them.
     CARRIED = (str(SemEdxColumns.ELECTRODE_TYPE), str(SemEdxColumns.ZOOM),
                str(SemEdxColumns.OPERATOR), str(SemEdxColumns.NOTE),
-               str(SemEdxColumns.DATE), str(SemEdxColumns.FOLDER),
-               str(SemEdxColumns.IMAGES))
+               str(SemEdxColumns.COMMENT), str(SemEdxColumns.DATE),
+               str(SemEdxColumns.FOLDER), str(SemEdxColumns.IMAGES))
 
     def __init__(self, layout: list[str] | None = None) -> None:
         self.quantities: list[Quantity] = quantities(layout)
@@ -94,7 +94,9 @@ class SemEdxProcessor:
                 str(SemEdxColumns.OPERATOR), *electrode_average,
                 str(SemEdxColumns.DATE),
                 str(SemEdxColumns.FOLDER), str(SemEdxColumns.IMAGES),
-                str(SemEdxColumns.NOTE)]
+                # The verdict, then whatever was said about it. Last, because
+                # the comment is the one column with no width worth predicting.
+                str(SemEdxColumns.NOTE), str(SemEdxColumns.COMMENT)]
 
     def detail_columns(self) -> list[str]:
         """Column order of the per measurement frame."""
